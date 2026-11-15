@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { asset } from './asset';
 import { buildPowerLines } from './powerlines';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Stadium } from './wrigley';
@@ -41,7 +42,7 @@ export interface CityData {
 }
 
 export async function loadCity(name: string): Promise<CityData> {
-  const res = await fetch(`/city/${name}.json`);
+  const res = await fetch(asset(`/city/${name}.json`));
   if (!res.ok) throw new Error(`no baked city ${name}`);
   return res.json();
 }

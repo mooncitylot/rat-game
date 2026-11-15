@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { asset } from './asset';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { makeMural, makeSign, SHOP_NAMES } from './paint';
 import type { Box } from './physics';
@@ -10,6 +11,7 @@ import type { Box } from './physics';
  */
 export function loadStyled(url: string, opts: { size?: number; levels?: number; contrast?: number; sat?: number; blur?: number; recolor?: number; gain?: number; seams?: boolean } = {}): THREE.Texture {
   if (typeof document === 'undefined') return new THREE.Texture(); // node (tests)
+  url = asset(url);
   const { size = 512, levels = 6, contrast = 1.15, sat = 0.9, blur = 0.7, recolor, gain = 1, seams = false } = opts;
   const rgb = recolor === undefined ? null : [((recolor >> 16) & 255) / 255, ((recolor >> 8) & 255) / 255, (recolor & 255) / 255];
   const canvas = document.createElement('canvas');

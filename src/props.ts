@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Box } from './physics';
+import { asset } from './asset';
 
 /** Real-world bounding sizes (x, y, z in metres) of the Poly Haven props, used for collision boxes. */
 export const PROP_SIZE: Record<string, [number, number, number]> = {
@@ -41,7 +42,7 @@ export class Props {
       p = typeof document === 'undefined'
         ? Promise.resolve(null)
         : this.loader
-            .loadAsync(`/models/${id}/${id}.gltf`)
+            .loadAsync(asset(`/models/${id}/${id}.gltf`))
             .then((gltf) => this.prepare(gltf.scene))
             .catch((e) => {
               console.warn('prop failed', id, e);
