@@ -4,6 +4,7 @@ import { buildPowerLines } from './powerlines';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Stadium } from './wrigley';
 import { CityCollider, inPoly, makePoly, type Poly } from './citycollider';
+import { buildLakefront } from './lakefront';
 import { FacadeKit, loadStyled } from './facade';
 import { SHOP_NAMES } from './paint';
 import type { Box } from './physics';
@@ -393,6 +394,9 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const alleyLines: { pts: P2[]; half: number }[] = [];
   const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
   const zebras: THREE.Matrix4[] = [];
+  const lakeTrails: { pts: P2[]; half: number; kind: string }[] = [];
+  const trailShoulders: THREE.BufferGeometry[] = [];
+  const trailDashes: THREE.Matrix4[] = [];
 
   for (const r of data.roads) {
     if (r.tu) continue;
@@ -432,6 +436,20 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       } else {
         footways.push({ pts: r.p, crossing: false });
         walkGeos.push(ribbon(r.p, Math.max(r.w, 3.0), terrain, 0.0, 4, 0.16));
+        if (r.n === 'Lakefront Trail' && !r.br) {
+          lakeTrails.push({ pts: r.p, half: Math.max(r.w, 3.0) / 2, kind: r.k });
+          // crushed-granite shoulders, and a yellow dashed centre line down the single-lane stretches
+          trailShoulders.push(ribbon(r.p, Math.max(r.w, 3.0) + 1.6, terrain, 0.05, 3));
+          if (r.k === 'cycleway' && r.w < 12) {
+            const rs = resample(r.p, 1);
+            for (let i = 1; i < rs.length; i++) {
+              if (i % 7 > 2) continue;
+              const dx = rs[i][0] - rs[i - 1][0], dz = rs[i][1] - rs[i - 1][1];
+              const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -Math.atan2(dz, dx)));
+              trailDashes.push(new THREE.Matrix4().compose(new THREE.Vector3(rs[i][0], terrain.at(rs[i][0], rs[i][1]) + 0.2, rs[i][1]), q, new THREE.Vector3(1, 1, 1)));
+            }
+          }
+        }
         slabs.push({ pts: r.p, half: Math.max(r.w, 3.0) / 2 });
       }
     }
@@ -452,6 +470,14 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     };
     mk(new THREE.PlaneGeometry(2.4, 0.2), 0xe6d9a8, dashes);
     mk(new THREE.PlaneGeometry(0.55, 3.2), 0xf2eee0, zebras);
+    mk(new THREE.PlaneGeometry(1.6, 0.16), 0xe8c84a, trailDashes);
+    if (trailShoulders.length) {
+      const sm = toon(0xb5a47e);
+      sm.polygonOffset = true;
+      sm.polygonOffsetFactor = -1.5;
+      sm.polygonOffsetUnits = -1.5;
+      group.add(shadowed(new THREE.Mesh(mergeGeometries(trailShoulders, false)!, sm)));
+    }
   }
   void flat;
 
@@ -648,6 +674,20 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
 
   // ---- street furniture: lamps, hydrants, trees (in the grass strip between kerb and sidewalk) ----
   const lamps: THREE.Vector3[] = [];
+  const addLamp = (lx: number, lz: number, nx: number, nz: number, scale: number, h: number): void => {
+    const lamp = new THREE.Vector3(lx, terrain.at(lx, lz) + h, lz);
+    lamps.push(lamp);
+    props.place(group, 'street_lamp_01', {
+      x: lx, y: terrain.at(lx, lz), z: lz, rotY: Math.atan2(nz, -nx), scale,
+      onLoad: (root) => {
+        root.updateWorldMatrix(true, true);
+        root.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (m.isMesh && m.material === bulbMat) lamp.copy(new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()));
+        });
+      },
+    });
+  };
   const treeSpots: { x: number; z: number; s: number; c: number }[] = [];
   const forests: P2[][] = [];
   for (const st of streetLines) {
@@ -660,18 +700,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       const lx = x + nx * half, lz = z + nz * half;
       if (inBuilding(lx, lz) || nearEdge(lx, lz, 12)) return;
       lampSide = -lampSide;
-      const lamp = new THREE.Vector3(lx, terrain.at(lx, lz) + 5.3, lz);
-      lamps.push(lamp);
-      props.place(group, 'street_lamp_01', {
-        x: lx, y: terrain.at(lx, lz), z: lz, rotY: Math.atan2(nz, -nx), scale: 1.4,
-        onLoad: (root) => {
-          root.updateWorldMatrix(true, true);
-          root.traverse((o) => {
-            const m = o as THREE.Mesh;
-            if (m.isMesh && m.material === bulbMat) lamp.copy(new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()));
-          });
-        },
-      });
+      addLamp(lx, lz, nx, nz, 1.4, 5.3);
     });
     along(st.pts, 55, (x, z, tx, tz, i) => {
       const nx = -tz * (i % 2 ? 1 : -1), nz = tx * (i % 2 ? 1 : -1);
@@ -863,6 +892,30 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     const bushMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient });
     place(bushes, bushGeo, bushMat, 0, true);
     for (const b of bushes) collider.addBox({ minX: b.x - 0.45 * b.s, maxX: b.x + 0.45 * b.s, minZ: b.z - 0.45 * b.s, maxZ: b.z + 0.45 * b.s, top: terrain.at(b.x, b.z) + 0.9 * b.s });
+  }
+
+  // ---- the Lakefront Trail: benches, lamps, groves, meadow, reeds and rocks ----
+  {
+    buildLakefront({
+      group, gradient, rand,
+      terrainAt: (x, z) => terrain.at(x, z),
+      blocked: (x, z) => {
+        if (inBuilding(x, z) || nearEdge(x, z, 12) || collider.slab(x, z) > 0) return true;
+        const r = segs.nearest(x, z, false);
+        if (r && r.d < 1.6) return true;
+        const a = segs.nearest(x, z, true);
+        return !!a && a.d < 1.0;
+      },
+      inWater,
+      inside: (x, z) => !nearEdge(x, z, 12),
+      addBox: (b) => collider.addBox(b),
+      treeSpots,
+      trails: lakeTrails,
+      water: waterPolys.map((w) => w.pts),
+      addLamp: (x, z, nx, nz) => addLamp(x, z, nx, nz, 1.15, 4.4),
+      solid,
+      windUniform,
+    });
   }
 
   // ---- the elevated L: a deck on columns ----
