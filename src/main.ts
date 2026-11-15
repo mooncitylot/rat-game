@@ -10,6 +10,7 @@ import { buildCity, loadCity } from './city';
 import { MapView } from './mapview';
 import { Judges, type Verdict } from './pageant';
 import { chunkInstances, cullChunks, instancify, splitMeshes, type ChunkedInstances } from './chunk';
+import { initTouch, touch } from './touch';
 import { buildWorld, makeToonGradient, TOTAL_CHEESE, type World } from './world';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -336,6 +337,7 @@ function pollGamepad(): void {
     sfx.init();
   }
 }
+initTouch(() => toggleMap());
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 addEventListener('mousemove', (e) => {
@@ -350,7 +352,7 @@ $('start').addEventListener('click', () => {
 });
 document.addEventListener('pointerlockchange', () => {
   // gamepad players never hold pointer lock, so don't kick them back to the title screen
-  if (document.pointerLockElement !== canvas && !mapView?.open && !pad.connected) document.body.classList.remove('playing');
+  if (document.pointerLockElement !== canvas && !mapView?.open && !pad.connected && !touch.enabled) document.body.classList.remove('playing');
 });
 if (location.search.includes('shot')) document.body.classList.add('playing'); // skip the title overlay for screenshots
 
@@ -419,6 +421,9 @@ function frame(now: number) {
 
   if (keys.has('KeyQ')) camYaw += realDt * 1.8;
   if (keys.has('KeyE')) camYaw -= realDt * 1.8;
+  camYaw -= touch.lookDX * 0.005;
+  camPitch = THREE.MathUtils.clamp(camPitch + touch.lookDY * 0.004, 0.08, 1.2);
+  touch.lookDX = touch.lookDY = 0;
   camYaw -= pad.lookX * realDt * 2.6;
   camPitch = THREE.MathUtils.clamp(camPitch + pad.lookY * realDt * 1.6, 0.08, 1.2);
 
@@ -435,10 +440,10 @@ function frame(now: number) {
   rat.update(
     dt,
     {
-      x: THREE.MathUtils.clamp((keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) + pad.x, -1, 1),
-      z: THREE.MathUtils.clamp((keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) + pad.z, -1, 1),
-      sprint: keys.has('ShiftLeft') || keys.has('ShiftRight') || pad.sprint,
-      jump: keys.has('Space') || pad.jump,
+      x: THREE.MathUtils.clamp((keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) + pad.x + touch.x, -1, 1),
+      z: THREE.MathUtils.clamp((keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) + pad.z + touch.z, -1, 1),
+      sprint: keys.has('ShiftLeft') || keys.has('ShiftRight') || pad.sprint || touch.sprint,
+      jump: keys.has('Space') || pad.jump || touch.jump,
     },
     camYaw,
     level,
