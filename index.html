@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>America's Next Top Rat</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14121c; overflow: hidden; font-family: ui-monospace, Menlo, monospace; color: #efe6d2; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; top: 16px; left: 16px; font-size: 18px; letter-spacing: .08em; text-shadow: 2px 2px 0 #14121c; pointer-events: none; line-height: 1.6; }
+  #fuel { width: 160px; height: 10px; border: 2px solid #efe6d2; box-shadow: 2px 2px 0 #14121c; margin-top: 4px; }
+  #fuelbar { height: 100%; width: 100%; background: #ffb030; }
+  #hearts { color: #ff5a6a; font-size: 24px; letter-spacing: .15em; }
+  #hearts .off { color: #4a3a48; }
+  #clock { position: fixed; top: 16px; right: 16px; font-size: 18px; text-align: right; letter-spacing: .08em; text-shadow: 2px 2px 0 #14121c; pointer-events: none; }
+  #credit { position: fixed; bottom: 8px; right: 12px; font-size: 10px; opacity: .65; pointer-events: none; text-shadow: 1px 1px 0 #14121c; }
+  #toast { position: fixed; top: 22%; left: 0; right: 0; text-align: center; font-size: 34px; letter-spacing: .2em; text-shadow: 3px 3px 0 #14121c; pointer-events: none; opacity: 0; transition: opacity .25s; }
+  #toast.on { opacity: 1; }
+  #flash { position: fixed; inset: 0; background: #c0152a; opacity: 0; pointer-events: none; transition: opacity .5s; mix-blend-mode: multiply; }
+  #help { position: fixed; bottom: 16px; left: 16px; font-size: 12px; opacity: .8; line-height: 1.6; pointer-events: none; text-shadow: 1px 1px 0 #14121c; }
+  #start { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(20,18,28,.55); cursor: pointer; text-align: center; }
+  #start h1 { font-size: clamp(28px, 6vw, 64px); margin: 0; letter-spacing: .08em; padding: 0 16px; }
+  #start p { opacity: .8; }
+  body.playing #start { display: none; }
+  #stars { color: #ffcf40; }
+  #judges { position: fixed; top: 34%; left: 0; right: 0; text-align: center; pointer-events: none; opacity: 0; text-shadow: 2px 2px 0 #14121c; }
+  #judges.on { animation: pop .25s ease-out forwards; }
+  #judges .jn { font-size: 22px; letter-spacing: .25em; color: #ffcf40; }
+  #judges .js { display: flex; justify-content: center; gap: 10px; margin: 6px 0; }
+  #judges .js span { display: inline-grid; place-items: center; width: 44px; height: 44px; background: #efe6d2; color: #14121c; font-size: 24px; font-weight: bold; border: 2px solid #14121c; box-shadow: 3px 3px 0 #14121c; text-shadow: none; }
+  #judges .jt { font-size: 16px; letter-spacing: .1em; }
+  @keyframes pop { from { opacity: 0; transform: scale(.8) translateY(8px); } to { opacity: 1; transform: none; } }
+  #stats { position: fixed; top: 70px; right: 16px; font-size: 11px; line-height: 1.5; white-space: pre; text-align: right; background: rgba(20,18,28,.7); padding: 6px 8px; pointer-events: none; display: none; z-index: 4; }
+  #stats.on { display: block; }
+  #map { position: fixed; inset: 0; display: none; place-items: center; background: rgba(20,18,28,.8); z-index: 5; }
+  #map.on { display: grid; }
+  #map .mp { background: #efe6d2; color: #14121c; padding: 14px; border: 3px solid #14121c; box-shadow: 6px 6px 0 #14121c; max-width: 96vw; }
+  #map .mt { font-weight: bold; letter-spacing: .15em; margin-bottom: 8px; } #map .mt span { font-weight: normal; opacity: .6; letter-spacing: 0; margin-left: 10px; font-size: 12px; }
+  #map canvas { display: block; width: min(1200px, 90vw); height: auto; cursor: crosshair; border: 2px solid #14121c; }
+  #map .mpl { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: min(1200px, 90vw); }
+  #map button { font: inherit; font-size: 12px; padding: 4px 8px; background: #fbf7ea; border: 2px solid #14121c; cursor: pointer; } #map button:hover { background: #ffd966; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div id="hearts"></div>
+  <div id="fuel"><div id="fuelbar"></div></div>
+  <div>CARRYING <b id="carried">0</b> &nbsp;·&nbsp; NEST <b id="banked">0</b> / <span id="total">0</span></div>
+  <div>STAR POWER <b id="stars">0</b> ★</div>
+</div>
+<div id="judges"></div>
+<div id="stats"></div>
+<div id="clock"><div id="time">--:--</div><div id="wx"></div></div>
+<div id="toast"></div>
+<div id="credit"></div>
+<div id="flash"></div>
+<div id="help">WASD move · SHIFT sprint · SPACE jump (hold to fly: rocket pack) · run into a PIPE to climb (W/S, SPACE to leap off) · deliver cheese to the green manhole<br>MOUSE look (click to capture) · Q/E turn camera · M map · N skip 1 hour · R toggle rain · ` stats · gamepad supported<br>THE JUDGES SCORE: hang time · near misses with cars · escaping cats · big cheese hauls</div>
+<div id="start"><div><h1>America's Next Top Rat</h1><p>Bank all the cheese to take the crown. Wow the judges on the way.</p><p>click to play</p></div></div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
