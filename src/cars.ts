@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Rat } from './rat';
+import { BUS_LEN, BUS_WID, getBusParts, type StopSpot } from './transit';
 
 export interface CarRoad {
   pts: [number, number][];
@@ -13,6 +14,7 @@ interface Lane {
   len: number;
   w: number;
   oneway: boolean;
+  stops: number[]; // bus stop positions along the centre line (metres from the start)
   startLinks: { lane: number; dir: 1 | -1 }[]; // roads that continue from the start / end
   endLinks: { lane: number; dir: 1 | -1 }[];
 }
@@ -130,10 +132,18 @@ export class Car {
   private yaw = 0;
   private tails: THREE.Mesh[] = [];
   private braking = false;
+  readonly kind: 'car' | 'bus';
+  readonly len: number;
+  readonly wid: number;
+  private dwell = 0;
+  private served = '';
 
-  constructor(gradient: THREE.DataTexture, private fleet: Fleet, lane: number, s: number, dir: 1 | -1, seed: number) {
+  constructor(gradient: THREE.DataTexture, private fleet: Fleet, lane: number, s: number, dir: 1 | -1, seed: number, kind: 'car' | 'bus' = 'car') {
     if (!shared) shared = makeShared(gradient);
     const k = shared;
+    this.kind = kind;
+    this.len = kind === 'bus' ? BUS_LEN : LEN;
+    this.wid = kind === 'bus' ? BUS_WID : WID;
     const paint = new THREE.MeshToonMaterial({ color: COLORS[seed % COLORS.length], gradientMap: gradient });
     const add = (g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0, shadow = true) => {
       const mesh = new THREE.Mesh(g, m);
@@ -142,6 +152,30 @@ export class Car {
       this.group.add(mesh);
       return mesh;
     };
+    if (kind === 'bus') {
+      const b = getBusParts(gradient);
+      add(b.body, b.bodyMat);
+      add(b.glass, k.glass, 0, 0, 0, false);
+      add(b.lamps, k.head, 0, 0, 0, false);
+      this.tails.push(add(b.tails, k.tail, 0, 0, 0, false));
+      for (const sx of [-1, 1]) for (const z of [3.5, -3.3]) add(b.wheel, k.tire, sx * 1.2, 0.5, z, false);
+      for (const sx of [-1, 1]) {
+        for (const hz of [5.85, -5.85]) {
+          const sp = new THREE.Sprite(hz > 0 ? k.halo : k.haloRed);
+          sp.scale.setScalar(hz > 0 ? 1.4 : 1.0);
+          sp.position.set(sx * (hz > 0 ? 0.9 : 0.95), 0.92, hz);
+          this.group.add(sp);
+        }
+      }
+      add(k.beamG, k.beam, 0, 0, 1.6, false).renderOrder = 2;
+      this.lane = lane;
+      this.dir = dir;
+      this.s = s;
+      this.top = 6 + (seed % 3) * 1.2;
+      this.off = 0;
+      this.place();
+      return;
+    }
     add(k.lower, paint);
     add(k.glassG, k.glass);
     add(k.roof, paint);
@@ -189,12 +223,12 @@ export class Car {
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
     for (const o of this.fleet.cars) {
       if (o === this || !o.active) continue;
-      if (Math.abs(o.pos.x - this.pos.x) > 16 || Math.abs(o.pos.z - this.pos.z) > 16) continue;
+      if (Math.abs(o.pos.x - this.pos.x) > 26 || Math.abs(o.pos.z - this.pos.z) > 26) continue;
       const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z;
       const ahead = dx * fx + dz * fz;
-      if (ahead < 0 || ahead > 14) continue;
+      if (ahead < 0 || ahead > 14 + this.len) continue;
       const side = Math.abs(dx * fz - dz * fx);
-      if (side < 2.2) best = Math.min(best, ahead - LEN);
+      if (side < Math.max(2.2, (this.wid + o.wid) / 2 + 0.4)) best = Math.min(best, ahead - (this.len + o.len) / 2);
     }
     return best;
   }
@@ -204,12 +238,32 @@ export class Car {
     let want = this.top;
     const g = this.gap();
     if (g < 12) want = Math.min(want, Math.max(0, (g - 1.5) * 1.2));
+    if (this.kind === 'bus') {
+      if (this.dwell > 0) {
+        this.dwell -= dt;
+        want = 0;
+      } else {
+        const L0 = this.fleet.lanes[this.lane];
+        L0.stops.forEach((st, i) => {
+          const at = this.dir === 1 ? st : Math.min(L0.len - 4, st + 14);
+          const ahead = (at - this.s) * this.dir;
+          const key = `${this.lane}:${i}:${this.dir}`;
+          if (ahead > 0 && ahead < 45 && this.served !== key) {
+            want = Math.min(want, Math.sqrt(2 * 1.6 * Math.max(ahead - 1, 0)));
+            if (ahead < 2 && this.speed < 0.7) {
+              this.dwell = 4 + Math.random() * 3;
+              this.served = key;
+            }
+          }
+        });
+      }
+    }
     const brk = want < this.speed - 0.4;
     if (brk !== this.braking) {
       this.braking = brk;
       for (const t of this.tails) t.material = brk ? shared!.brake : shared!.tail;
     }
-    this.speed += (want - this.speed) * Math.min(1, dt * (want < this.speed ? 3 : 1));
+    this.speed += (want - this.speed) * Math.min(1, dt * (want < this.speed ? 3 : this.kind === 'bus' ? 0.6 : 1));
     this.s += this.dir * this.speed * dt;
     const L = this.fleet.lanes[this.lane];
     if (this.s > L.len || this.s < 0) {
@@ -229,10 +283,10 @@ export class Car {
     this.place();
     // run the rat over
     const dx = rat.pos.x - this.pos.x, dz = rat.pos.z - this.pos.z;
-    if (this.speed > 1.5 && rat.pos.y - this.pos.y < 1.4) {
+    if (this.speed > 1.5 && rat.pos.y - this.pos.y < (this.kind === 'bus' ? 3.4 : 1.4)) {
       const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
       const lx = dx * fz - dz * fx, ly = dx * fx + dz * fz;
-      if (Math.abs(lx) < WID / 2 + 0.2 && Math.abs(ly) < LEN / 2 + 0.2) return true;
+      if (Math.abs(lx) < this.wid / 2 + 0.2 && Math.abs(ly) < this.len / 2 + 0.2) return true;
     }
     return false;
   }
@@ -273,7 +327,9 @@ export class Fleet {
       for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + p[i].distanceTo(p[i - 1]));
       const len = cum[cum.length - 1];
       if (len < 12) continue;
-      this.lanes.push({ p, cum, len, w: r.w, oneway: r.oneway, startLinks: [], endLinks: [] });
+      const stops: number[] = [];
+      if (r.w >= 11 && len > 90) for (let st = 45 + ((this.lanes.length * 37) % 40); st < len - 40; st += 170) stops.push(st);
+      this.lanes.push({ p, cum, len, w: r.w, oneway: r.oneway, stops, startLinks: [], endLinks: [] });
       this.onewayDirs.push(1);
     }
     // link road ends to any road whose end is within a few metres
@@ -317,5 +373,38 @@ export class Fleet {
       scene.add(car.group);
       this.cars.push(car);
     }
+  }
+
+  /** buses run the wide through-streets and pause at the stops */
+  spawnBuses(gradient: THREE.DataTexture, scene: THREE.Scene, count: number): void {
+    const lanes = this.lanes.map((l, i) => ({ l, i })).filter((x) => x.l.stops.length);
+    if (!lanes.length) return;
+    const total = lanes.reduce((a, x) => a + x.l.len, 0);
+    for (let n = 0; n < count; n++) {
+      let r = Math.random() * total, k = 0;
+      while (k < lanes.length - 1 && r > lanes[k].l.len) r -= lanes[k++].l.len;
+      const { l: L, i: li } = lanes[k];
+      const dir: 1 | -1 = L.oneway ? 1 : Math.random() < 0.5 ? 1 : -1;
+      const bus = new Car(gradient, this, li, Math.random() * L.len, dir, n, 'bus');
+      scene.add(bus.group);
+      this.cars.push(bus);
+    }
+  }
+
+  /** curbside spots for the bus-stop shelters (right-hand side of travel) */
+  stopSpots(): StopSpot[] {
+    const out: StopSpot[] = [];
+    this.lanes.forEach((L) => {
+      for (const st of L.stops) {
+        for (const dir of L.oneway ? [1] : [1, -1]) {
+          const s = dir === 1 ? st : Math.min(L.len - 4, st + 14);
+          const { x, z, tx, tz } = this.sample(L, s);
+          const rx = -tz * dir, rz = tx * dir; // right of travel
+          const off = L.w / 2 + 1.7;
+          out.push({ x: x + rx * off, z: z + rz * off, fx: -rx, fz: -rz });
+        }
+      }
+    });
+    return out;
   }
 }

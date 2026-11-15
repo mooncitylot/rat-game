@@ -4,6 +4,8 @@ import { Sfx } from './audio';
 import { Cat } from './cat';
 import { Human } from './human';
 import { Fleet, setCarNight } from './cars';
+import { Trains } from './trains';
+import { buildBusStops } from './transit';
 import { InkPipeline } from './ink';
 import { Rat, MAX_FUEL } from './rat';
 import { buildCity, loadCity } from './city';
@@ -150,6 +152,16 @@ for (let i = 0; i < PEDS && world.walkStarts.length; i++) {
 // traffic
 const fleet = new Fleet(world.carRoads ?? [], world.terrainAt ?? (() => 0));
 fleet.spawn(gradient, scene, 250);
+fleet.spawnBuses(gradient, scene, 16);
+{
+  const ground = (x: number, z: number) => world.collider.ground(x, z, world.collider.terrain(x, z) + 1, 0.1, 0.25);
+  const spots = fleet.stopSpots().filter((s) => !world.collider.solidAt(s.x, world.collider.terrain(s.x, s.z) + 0.6, s.z, 1.0) && Math.abs(ground(s.x, s.z) - world.collider.terrain(s.x, s.z)) < 0.4);
+  scene.add(buildBusStops(spots, ground, gradient));
+}
+// the L
+const trains = new Trains(world.map?.rails ?? [], world.terrainAt ?? (() => 0), gradient);
+scene.add(trains.group);
+if (location.search.includes('shot')) Object.assign(window, { __trains: trains, __fleet: fleet, __rat: rat });
 
 const keys = new Set<string>();
 let camYawInit = Number(new URLSearchParams(location.search).get('yaw') ?? Math.PI + 0.55); // default: look toward +x/+z, into the city
@@ -474,6 +486,7 @@ function frame(now: number) {
   }
 
   setCarNight(env.night);
+  sfx.setTrain(trains.update(dt, rat.pos, env.night));
   // ---- cars + pedestrians: many exist, but only those near the rat are shown and simulated ----
   // (off-screen agents freeze in place; hysteresis stops them flickering at the edge)
   const near = (p: THREE.Vector3, r: number, on: boolean) => {
@@ -583,6 +596,11 @@ function frame(now: number) {
     shake *= Math.exp(-realDt * 7);
   }
   camera.lookAt(lookAt);
+  const dc = (window as unknown as { __cam?: number[] }).__cam; // debug: set from the console / test scripts
+  if (dc) {
+    camera.position.set(dc[0], dc[1], dc[2]);
+    camera.lookAt(dc[3], dc[4], dc[5]);
+  }
   // speed sells itself: widen the lens when sprinting or flying
   const fov = BASE_FOV + (rat.speed > 5.5 ? 5 : 0) + (rat.flying ? 8 : 0) - (slowmo > 0 ? 4 : 0);
   if (Math.abs(camera.fov - fov) > 0.05) {

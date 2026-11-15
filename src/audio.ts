@@ -57,11 +57,32 @@ export class Sfx {
     this.windGain.gain.value = 0;
     wind.connect(hp).connect(this.windGain).connect(this.master);
     wind.start();
+
+    // the L: a low rumble with a slow clatter, only audible when a train is near
+    const tr = ctx.createBufferSource();
+    tr.buffer = buf;
+    tr.loop = true;
+    tr.playbackRate.value = 0.7;
+    const tlp = ctx.createBiquadFilter();
+    tlp.type = 'bandpass';
+    tlp.frequency.value = 140;
+    tlp.Q.value = 0.9;
+    this.trainGain = ctx.createGain();
+    this.trainGain.gain.value = 0;
+    const clack = ctx.createOscillator();
+    clack.frequency.value = 7; // wheel joints
+    const clackAmt = ctx.createGain();
+    clackAmt.gain.value = 0.35;
+    clack.connect(clackAmt).connect(this.trainGain.gain);
+    clack.start();
+    tr.connect(tlp).connect(this.trainGain).connect(this.master);
+    tr.start();
   }
 
   private noise: AudioBuffer | null = null;
   private cityGain: GainNode | null = null;
   private windGain: GainNode | null = null;
+  private trainGain: GainNode | null = null;
 
   setRain(level: number): void {
     if (this.rainGain && this.ctx) this.rainGain.gain.setTargetAtTime(level * 0.22, this.ctx.currentTime, 0.4);
@@ -70,6 +91,11 @@ export class Sfx {
   /** 0 = sleepy small hours, 1 = rush hour */
   setCity(busy: number): void {
     if (this.cityGain && this.ctx) this.cityGain.gain.setTargetAtTime(0.02 + busy * 0.06, this.ctx.currentTime, 1);
+  }
+
+  /** 0..1: how near an L train is */
+  setTrain(level: number): void {
+    if (this.trainGain && this.ctx) this.trainGain.gain.setTargetAtTime(level * 0.35, this.ctx.currentTime, 0.2);
   }
 
   setWind(level: number): void {
