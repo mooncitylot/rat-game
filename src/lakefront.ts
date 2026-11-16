@@ -43,6 +43,18 @@ function cube(w: number, h: number, d: number, x: number, y: number, z: number, 
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
+/** a coloured, flat-shaded cylinder (or cone when radii differ), centred on (x, y, z) */
+function tube(rTop: number, rBot: number, h: number, x: number, y: number, z: number, color: number, seg = 10): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(rTop, rBot, h, seg).toNonIndexed();
+  g.deleteAttribute('uv');
+  g.translate(x, y, z);
+  const c = new THREE.Color(color);
+  const n = g.getAttribute('position').count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
 function merged(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const g = mergeGeometries(parts, false);
   if (!g) throw new Error('lakefront geometry merge failed');
@@ -60,19 +72,44 @@ const noise = (x: number, z: number) => 0.5 + 0.25 * Math.sin(x * 0.045 + Math.s
 
 // ---- furniture models ------------------------------------------------------------------------
 
-const WOOD = 0x9a6b3f, WOOD_D = 0x7d5430, IRON = 0x2f3d36, STONE = 0x9a9a94, STEEL = 0xaab4bb, WHITE = 0xf1ede0;
+const WOOD = 0x9a6b3f, WOOD_D = 0x7d5430, SLAT = 0x2f6044, SLAT_D = 0x264e38, BLACK = 0x1c211e, IRON = 0x2f3d36, STONE = 0x9a9a94, STEEL = 0xaab4bb, WHITE = 0xf1ede0;
 
+/** Chicago Park District style: dark-green slats on black cast-iron ends */
 function benchGeo(): THREE.BufferGeometry {
   const p: THREE.BufferGeometry[] = [];
-  for (const z of [-0.2, -0.06, 0.08, 0.22]) p.push(cube(1.8, 0.05, 0.11, 0, 0.45, z, WOOD)); // seat slats
-  for (const y of [0.68, 0.84]) p.push(cube(1.8, 0.1, 0.04, 0, y, -0.3, WOOD_D)); // back slats
+  for (const z of [-0.2, -0.06, 0.08, 0.22]) p.push(cube(1.8, 0.05, 0.11, 0, 0.45, z, SLAT)); // seat slats
+  for (const y of [0.68, 0.84]) p.push(cube(1.8, 0.1, 0.04, 0, y, -0.3, SLAT_D)); // back slats
   for (const x of [-0.82, 0.82]) {
-    p.push(cube(0.06, 0.45, 0.5, x, 0.225, 0, IRON)); // cast-iron ends
-    p.push(cube(0.06, 0.5, 0.05, x, 0.7, -0.3, IRON));
-    p.push(cube(0.07, 0.05, 0.5, x, 0.62, -0.02, IRON)); // arm rests
+    p.push(cube(0.06, 0.45, 0.5, x, 0.225, 0, BLACK)); // cast-iron ends
+    p.push(cube(0.06, 0.5, 0.05, x, 0.7, -0.3, BLACK));
+    p.push(cube(0.07, 0.05, 0.5, x, 0.62, -0.02, BLACK)); // arm rests
   }
   return merged(p);
 }
+/** round black perforated-steel litter bin with a domed lid and a green band; `recycle` makes it blue */
+function binGeo(recycle: boolean): THREE.BufferGeometry {
+  const body = recycle ? 0x2c64a8 : BLACK;
+  return merged([
+    tube(0.27, 0.25, 0.86, 0, 0.45, 0, body),
+    tube(0.285, 0.285, 0.07, 0, 0.62, 0, recycle ? 0xe9eef2 : 0x2f6044), // band
+    tube(0.1, 0.3, 0.12, 0, 0.94, 0, recycle ? 0x1f4a80 : 0x2a302d), // lid dome
+    cube(0.2, 0.05, 0.03, 0, 0.82, 0.28, 0x0a0c0b), // flap
+    tube(0.3, 0.3, 0.03, 0, 0.03, 0, 0x2a302d), // base ring
+  ]);
+}
+/** trail signpost: green board with a white bike and walker, and the trail name strip */
+function signGeo(): THREE.BufferGeometry {
+  return merged([
+    cube(0.1, 2.2, 0.1, 0, 1.1, 0, 0x2a302d),
+    cube(0.95, 0.62, 0.05, 0, 1.95, 0.07, 0x1e5a3c),
+    cube(0.86, 0.04, 0.06, 0, 2.2, 0.075, WHITE), // frame top
+    cube(0.86, 0.04, 0.06, 0, 1.7, 0.075, WHITE),
+    cube(0.3, 0.26, 0.06, -0.22, 1.97, 0.08, WHITE), // bike
+    cube(0.14, 0.3, 0.06, 0.25, 1.97, 0.08, WHITE), // walker
+    cube(0.6, 0.1, 0.05, 0, 1.58, 0.07, 0x3a78b5), // "LAKEFRONT TRAIL" plate
+  ]);
+}
+
 function pictableGeo(): THREE.BufferGeometry {
   const p: THREE.BufferGeometry[] = [cube(1.9, 0.06, 0.8, 0, 0.76, 0, WOOD)];
   for (const s of [-1, 1]) {
@@ -133,7 +170,7 @@ const REED = [0x8a9a4a, 0x9aa855, 0xb0a85a, 0x7a9448];
 
 interface Item { x: number; z: number; s: number; c: number; r?: number }
 
-export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: number; trees: number } {
+export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: number; bins: number; trees: number } {
   const { group, gradient, rand, terrainAt, blocked, inWater, inside, addBox } = ctx;
   const toon = (c: number, extra: Partial<THREE.MeshToonMaterialParameters> = {}) => new THREE.MeshToonMaterial({ color: c, gradientMap: gradient, ...extra });
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
@@ -158,7 +195,7 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
       }
     }
   }
-  if (!have) return { benches: 0, lamps: 0, trees: 0 };
+  if (!have) return { benches: 0, lamps: 0, bins: 0, trees: 0 };
   /** distance from the edge of the paved trail (negative = on it) */
   const trailGap = (x: number, z: number): number => {
     let best = Infinity;
@@ -207,9 +244,12 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
     fountain: { geo: fountainGeo(), list: [] },
     rack: { geo: bikeRackGeo(), list: [] },
     mile: { geo: mileMarkerGeo(), list: [] },
+    bin: { geo: binGeo(false), list: [] },
+    recycle: { geo: binGeo(true), list: [] },
+    sign: { geo: signGeo(), list: [] },
   };
   /** footprint (w along the local x axis, d along z) and top height of what gets a collision box */
-  const FOOT: Record<string, [number, number, number]> = { bench: [1.9, 0.7, 0.5], table: [1.9, 1.8, 0.78], fountain: [0.5, 0.5, 1.0], rack: [0.7, 1.8, 0.8], mile: [0.3, 0.3, 1.5] };
+  const FOOT: Record<string, [number, number, number]> = { bench: [1.9, 0.7, 0.5], table: [1.9, 1.8, 0.78], fountain: [0.5, 0.5, 1.0], rack: [0.7, 1.8, 0.8], mile: [0.3, 0.3, 1.5], bin: [0.6, 0.6, 1.0], recycle: [0.6, 0.6, 1.0], sign: [0.3, 0.3, 2.2] };
   const addFurn = (kind: string, x: number, z: number, rot: number): boolean => {
     if (blocked(x, z)) return false;
     furn[kind].list.push({ x, z, rot });
@@ -220,7 +260,7 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
     return true;
   };
 
-  let nLamps = 0;
+  let nLamps = 0, nBins = 0;
   for (const t of ctx.trails) {
     if (t.kind === 'path' && t.half < 1.6) continue; // skip the thin spurs
     const half = t.half;
@@ -242,22 +282,37 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
           nLamps++;
         }
       }
-      // benches on the land side facing the water, every ~44 m (and a few on the lake side facing the path)
-      if (i % 11 === 5) {
-        const lakeFacing = ((i / 11) | 0) % 4 === 3; // one in four sits on the lake side
+      // benches every ~20 m: mostly on the land side facing the water, one in four on the lake side facing the path
+      if (i % 5 === 2) {
+        const n5 = (i / 5) | 0;
+        const lakeFacing = n5 % 4 === 3;
         const n = out(lakeFacing ? 1 : -1), off = half + 1.15;
         const px = x + n[0] * off, pz = z + n[1] * off;
-        if (!crowded('bench', px, pz, 30) && !blocked(px, pz)) {
+        if (!crowded('bench', px, pz, 15) && !blocked(px, pz)) {
           const fx = -n[0], fz = -n[1];
           if (addFurn('bench', px, pz, Math.atan2(fx, fz))) {
             note('bench', px, pz);
-            // a bin beside every other bench
-            if (((i / 11) | 0) % 2 === 0) {
-              const bx = px + tx * 1.7 + n[0] * 0.2, bz = pz + tz * 1.7 + n[1] * 0.2;
-              if (!blocked(bx, bz)) ctx.solid('metal_trash_can', bx, bz, 1.2, rand() * 6);
+            // a litter bin at the end of every bench, with a recycling bin beside it at every third
+            const bx = px + tx * 1.6 + n[0] * 0.15, bz = pz + tz * 1.6 + n[1] * 0.15;
+            if (addFurn('bin', bx, bz, rand() * 6.28)) {
+              nBins++;
+              if (n5 % 3 === 0) addFurn('recycle', bx + tx * 0.7, bz + tz * 0.7, rand() * 6.28);
             }
           }
         }
+      }
+      // a bin on the water side of the path too, every ~48 m, so a rat is never far from a snack
+      if (i % 12 === 8) {
+        const n = out(1), px = x + n[0] * (half + 0.9), pz = z + n[1] * (half + 0.9);
+        if (!crowded('bin', px, pz, 30) && addFurn('bin', px, pz, rand() * 6.28)) {
+          note('bin', px, pz);
+          nBins++;
+        }
+      }
+      // trail signposts
+      if (i % 25 === 7) {
+        const n = out(-1), px = x + n[0] * (half + 0.9), pz = z + n[1] * (half + 0.9);
+        if (!crowded('sign', px, pz, 80) && addFurn('sign', px, pz, Math.atan2(-n[0], -n[1]))) note('sign', px, pz);
       }
       // bike racks near the benches, now and then
       if (i % 31 === 12) {
@@ -290,6 +345,58 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
     });
     mesh.castShadow = mesh.receiveShadow = true;
     group.add(mesh);
+  }
+
+
+  // ---- pavement paint, Chicago style: bikes get the inland lanes with a dashed yellow centre line, walkers get a
+  //      lane on the lake side divided off by a solid white line ----
+  {
+    const pos: number[] = [], colr: number[] = [];
+    const YEL = new THREE.Color(0xe8c84a), WHT = new THREE.Color(0xeeeae0);
+    const quad = (a: P2, b: P2, nx: number, nz: number, off: number, w: number, c: THREE.Color) => {
+      const v = (p: P2, o: number): number[] => {
+        const x = p[0] + nx * o, z = p[1] + nz * o;
+        return [x, terrainAt(x, z) + 0.2, z];
+      };
+      const A = v(a, off - w / 2), B = v(a, off + w / 2), C = v(b, off + w / 2), D = v(b, off - w / 2);
+      for (const q4 of [A, B, C, A, C, D]) {
+        pos.push(q4[0], q4[1], q4[2]);
+        colr.push(c.r, c.g, c.b);
+      }
+    };
+    for (const t of ctx.trails) {
+      if (t.kind !== 'cycleway') continue;
+      const wide = t.half * 2 >= 12;
+      // resample every metre so the lines follow the bends
+      const rs: P2[] = [];
+      walk(t.pts, 1, 0, (x, z) => rs.push([x, z]));
+      if (rs.length < 3) continue;
+      // one side decision per trail: which side of the centreline faces the lake
+      const mid = rs[rs.length >> 1], mn = rs[(rs.length >> 1) + 1];
+      const tl = Math.hypot(mn[0] - mid[0], mn[1] - mid[1]) || 1;
+      const lw = nearestWater(mid[0], mid[1]);
+      const lakeSign = (-(mn[1] - mid[1]) / tl) * (lw[0] - mid[0]) + ((mn[0] - mid[0]) / tl) * (lw[1] - mid[1]) > 0 ? 1 : -1;
+      const pedW = 4.2; // the walkers' lane
+      for (let i = 0; i + 1 < rs.length; i++) {
+        const a = rs[Math.max(0, i - 1)], b = rs[Math.min(rs.length - 1, i + 2)];
+        const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const nx = (-(b[1] - a[1]) / l) * lakeSign, nz = ((b[0] - a[0]) / l) * lakeSign; // points toward the lake
+        if (wide) {
+          quad(rs[i], rs[i + 1], nx, nz, t.half - pedW, 0.16, WHT); // walkers' divider
+          if (i % 7 < 3) quad(rs[i], rs[i + 1], nx, nz, -pedW / 2, 0.14, YEL); // bikes' centre line
+        } // single-lane stretches already get their dashes from city.ts
+      }
+    }
+    if (pos.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length / 3).fill(0).flatMap(() => [0, 1, 0]), 3));
+      const m = toon(0xffffff, { vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+      const mesh = new THREE.Mesh(g, m);
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
   }
 
   // ---- trees: groves with clearings, three kinds ----
@@ -532,5 +639,5 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
     }
   }
 
-  return { benches: furn.bench.list.length, lamps: nLamps, trees: oaks.length + pines.length + birches.length };
+  return { benches: furn.bench.list.length, lamps: nLamps, bins: nBins, trees: oaks.length + pines.length + birches.length };
 }
