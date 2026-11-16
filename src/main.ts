@@ -11,6 +11,7 @@ import { Rat, MAX_FUEL } from './rat';
 import { buildCity, loadCity } from './city';
 import { MapView } from './mapview';
 import { Judges, type Verdict } from './pageant';
+import { Crowd } from './crowd';
 import { chunkInstances, cullChunks, instancify, splitMeshes, type ChunkedInstances } from './chunk';
 import { initTouch, touch } from './touch';
 import { buildWorld, makeToonGradient, TOTAL_CHEESE, type World } from './world';
@@ -139,8 +140,10 @@ const cats = world.catRoutes.map((route, i) => {
 
 // pedestrians: they walk the sidewalks, wait for the walk signal and cross on the zebras
 const humans: Human[] = [];
-const PEDS = 400;
-const PED_RADIUS = 80; // only pedestrians this close to the rat are drawn and simulated
+const PEDS = 300; // full-detail, stompable people
+const PED_RADIUS = 42; // only rigs this close to the rat are drawn and simulated
+const CROWD = 2400; // instanced background walkers
+const CROWD_RADIUS = 115;
 const CAR_RADIUS = 140;
 for (let i = 0; i < PEDS && world.walkStarts.length; i++) {
   const start = world.walkStarts[Math.floor((i * world.walkStarts.length) / PEDS)];
@@ -149,9 +152,12 @@ for (let i = 0; i < PEDS && world.walkStarts.length; i++) {
   humans.push(h);
 }
 
+const crowd = new Crowd(gradient, world.walkNet, world.walkStarts, CROWD, CROWD_RADIUS);
+scene.add(crowd.group);
+
 // traffic
 const fleet = new Fleet(world.carRoads ?? [], world.terrainAt ?? (() => 0));
-fleet.spawn(gradient, scene, 250);
+fleet.spawn(gradient, scene, 650);
 fleet.spawnBuses(gradient, scene, 16);
 {
   const ground = (x: number, z: number) => world.collider.ground(x, z, world.collider.terrain(x, z) + 1, 0.1, 0.25);
@@ -493,15 +499,16 @@ function frame(now: number) {
     const d = Math.hypot(p.x - rat.pos.x, p.z - rat.pos.z);
     return d < (on ? r * 1.15 : r);
   };
-  fleet.cars.forEach((c) => {
-    const on = near(c.pos, CAR_RADIUS, c.active);
-    c.setActive(on);
-    if (on && c.update(dt, rat)) {
+  fleet.activate(rat.pos.x, rat.pos.z, CAR_RADIUS);
+  for (const c of fleet.active) {
+    if (c.update(dt, rat)) {
       sfx.stomp();
       takeHit(c.pos.x, c.pos.z, 'RUN OVER!');
     }
-  });
+  }
+  fleet.render(camera);
 
+  crowd.update(dt, t, rat, env.rain);
   humans.forEach((h) => {
     h.setActive(near(h.pos, PED_RADIUS, h.active));
     if (h.update(dt, rat, t, env)) {
@@ -612,7 +619,7 @@ function frame(now: number) {
   if (!aerial) cullChunks(camera.position, (scene.fog as THREE.Fog).far + 10);
   ink.render(scene, camera, t);
   const cpu2 = performance.now();
-  if (statsOn) drawStats(Math.min(rawDt, 1), `cars ${fleet.cars.filter((c) => c.active).length}/${fleet.cars.length} · peds ${humans.filter((h) => h.active).length}/${humans.length}`, cpu1 - cpu0, cpu2 - cpu1);
+  if (statsOn) drawStats(Math.min(rawDt, 1), `cars ${fleet.cars.filter((c) => c.active).length}/${fleet.cars.length} · peds ${humans.filter((h) => h.active).length}/${humans.length} + crowd ${crowd.visible}/${crowd.size}`, cpu1 - cpu0, cpu2 - cpu1);
   tuneResolution(Math.min(rawDt, 1));
   requestAnimationFrame(frame);
 }

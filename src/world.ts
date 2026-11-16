@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FacadeKit, loadStyled, texBox } from './facade';
 import { Props, propBox } from './props';
 import { TrafficSignals } from './signals';
+import { StreetLamps } from './streetlamps';
 import { BoxCollider, type Collider } from './collider';
 import { SidewalkNet, type Net, type Node } from './human';
 import type { Box } from './physics';
@@ -197,6 +198,7 @@ export function buildWorld(gradient: THREE.DataTexture): World {
   const bulbMat = new THREE.MeshBasicMaterial({ color: 0xfff1b0 });
   const props = new Props(gradient, bulbMat);
   const signals = new TrafficSignals(gradient);
+  const streetLamps = new StreetLamps(gradient, bulbMat);
   const solid = (id: string, x: number, z: number, y0: number, scale: number, rotY = 0) => {
     props.place(group, id, { x, y: y0, z, rotY, scale });
     const b = propBox(id, x, z, y0, scale, rotY);
@@ -289,22 +291,7 @@ export function buildWorld(gradient: THREE.DataTexture): World {
         [x0 + ll, z0 + BLOCK * 0.5, Math.PI], // west curb
         [x0 + BLOCK - ll, z0 + BLOCK * 0.5, 0], // east curb
       ] as [number, number, number][]).forEach(([lx, lz, rot]) => {
-        const lamp = new THREE.Vector3(lx, 5.3, lz);
-        lamps.push(lamp);
-        props.place(group, 'street_lamp_01', {
-          x: lx,
-          z: lz,
-          rotY: rot,
-          scale: 1.4,
-          onLoad: (root) => {
-            // move the light to wherever the model's bulb really is
-            root.updateWorldMatrix(true, true);
-            root.traverse((o) => {
-              const mesh = o as THREE.Mesh;
-              if (mesh.isMesh && mesh.material === bulbMat) lamp.copy(new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3()));
-            });
-          },
-        });
+        lamps.push(streetLamps.add(lx, 0, lz, rot, { h: 6.2, banner: true }));
       });
 
       // traffic signals on all four corners (poles stand 0.7 m in from both curbs)
@@ -315,6 +302,8 @@ export function buildWorld(gradient: THREE.DataTexture): World {
   }
   signals.finish();
   group.add(signals.group);
+  streetLamps.finish();
+  group.add(streetLamps.group);
 
   // cat patrols run the length of each alley column, straight through the cross streets
   for (let c = 0; c < COLS; c++) {

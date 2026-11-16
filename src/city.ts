@@ -11,6 +11,7 @@ import type { Box } from './physics';
 import { PolyNet } from './polynet';
 import { Props, propBox, PROP_SIZE } from './props';
 import { TrafficSignals } from './signals';
+import { StreetLamps } from './streetlamps';
 import { TOTAL_CHEESE, type Cheese, type Pipe, type World } from './world';
 
 // ------------------------------------------------------------------------------------------------
@@ -857,19 +858,12 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
 
   // ---- street furniture: lamps, hydrants, trees (in the grass strip between kerb and sidewalk) ----
   const lamps: THREE.Vector3[] = [];
+  const streetLamps = new StreetLamps(gradient, bulbMat);
   const addLamp = (lx: number, lz: number, nx: number, nz: number, scale: number, h: number): void => {
-    const lamp = new THREE.Vector3(lx, terrain.at(lx, lz) + h, lz);
-    lamps.push(lamp);
-    props.place(group, 'street_lamp_01', {
-      x: lx, y: terrain.at(lx, lz), z: lz, rotY: Math.atan2(nz, -nx), scale,
-      onLoad: (root) => {
-        root.updateWorldMatrix(true, true);
-        root.traverse((o) => {
-          const m = o as THREE.Mesh;
-          if (m.isMesh && m.material === bulbMat) lamp.copy(new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()));
-        });
-      },
-    });
+    // streets get tall poles with a banner; the lakefront trail gets the short banner-less version
+    const tall = scale > 1.2;
+    lamps.push(streetLamps.add(lx, terrain.at(lx, lz), lz, Math.atan2(nz, -nx), { h: tall ? 6.2 : 4.4, banner: tall }));
+    void h;
   };
   const treeSpots: { x: number; z: number; s: number; c: number; conifer?: boolean }[] = [];
   const forests: P2[][] = [];
@@ -1310,6 +1304,8 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   }
   signals.finish();
   group.add(signals.group);
+  streetLamps.finish();
+  group.add(streetLamps.group);
 
   // ---- pedestrians: the mapped footways ----
   const net = new PolyNet(footways, (x, z) => terrain.at(x, z));

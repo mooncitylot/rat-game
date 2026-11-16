@@ -82,16 +82,33 @@ export class TrafficSignals {
       const cx = x + h.fx * 0.42, cz = z + h.fz * 0.42, cy = 4.55;
       // bracket from the pole to the housing
       this.add(this.metal, new THREE.BoxGeometry(0.1, 0.1, 0.46), T(x + h.fx * 0.22, cy, z + h.fz * 0.22, ry));
-      this.add(this.housing, new THREE.BoxGeometry(0.36, 1.08, 0.3), T(cx, cy, cz, ry));
-      this.add(this.housing, new THREE.BoxGeometry(0.5, 1.22, 0.05), T(cx - h.fx * 0.17, cy, cz - h.fz * 0.17, ry)); // back plate
-      LIGHTS.forEach((l, i) => {
-        const ly = cy + 0.33 - i * 0.33;
-        const front = new THREE.Vector3(h.fx, 0, h.fz).multiplyScalar(0.16);
-        this.add(this.lens[h.axis][l], new THREE.SphereGeometry(0.115, 10, 8), T(cx + front.x, ly, cz + front.z, ry));
-        // visor over each lens
-        this.add(this.housing, new THREE.BoxGeometry(0.3, 0.035, 0.22), T(cx + h.fx * 0.22, ly + 0.15, cz + h.fz * 0.22, ry));
-      });
+      this.head(T, h.axis, cx, cy, cz, h.fx, h.fz, ry);
+
+      // mast arm: sweeps out and up from the pole top, with a second head hanging over the approach
+      const reach = 3.4, ay = 5.0;
+      const ax = x + h.fx * reach, az = z + h.fz * reach;
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(x, ay - 0.5, z),
+        new THREE.Vector3(x + h.fx * 0.2, ay + 0.35, z + h.fz * 0.2),
+        new THREE.Vector3(ax, ay + 0.1, az),
+      );
+      this.add(this.metal, new THREE.TubeGeometry(curve, 10, 0.06, 6, false), new THREE.Matrix4());
+      this.add(this.metal, new THREE.BoxGeometry(0.06, 0.4, 0.06), T(ax, ay - 0.1, az)); // hanger
+      this.head(T, h.axis, ax, ay - 0.82, az, h.fx, h.fz, ry);
     }
+  }
+
+  /** One three-lens signal head at (cx, cy, cz) facing (fx, fz). */
+  private head(T: (px: number, py: number, pz: number, ry?: number) => THREE.Matrix4, axis: 'ns' | 'ew', cx: number, cy: number, cz: number, fx: number, fz: number, ry: number): void {
+    this.add(this.housing, new THREE.BoxGeometry(0.36, 1.08, 0.3), T(cx, cy, cz, ry));
+    this.add(this.housing, new THREE.BoxGeometry(0.5, 1.22, 0.05), T(cx - fx * 0.17, cy, cz - fz * 0.17, ry)); // back plate
+    LIGHTS.forEach((l, i) => {
+      const ly = cy + 0.33 - i * 0.33;
+      const front = new THREE.Vector3(fx, 0, fz).multiplyScalar(0.16);
+      this.add(this.lens[axis][l], new THREE.SphereGeometry(0.115, 10, 8), T(cx + front.x, ly, cz + front.z, ry));
+      // visor over each lens
+      this.add(this.housing, new THREE.BoxGeometry(0.3, 0.035, 0.22), T(cx + fx * 0.22, ly + 0.15, cz + fz * 0.22, ry));
+    });
   }
 
   /** Merge everything into a handful of meshes. Call once, after the last pole. */

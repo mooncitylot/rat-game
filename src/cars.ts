@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Rat } from './rat';
 import { BUS_LEN, BUS_WID, getBusParts, type StopSpot } from './transit';
 
@@ -42,6 +43,8 @@ interface Shared {
   beam: THREE.MeshBasicMaterial;
   halo: THREE.SpriteMaterial;
   haloRed: THREE.SpriteMaterial;
+  haloM: THREE.MeshBasicMaterial; // the same glows as quads, for the instanced cars
+  haloRedM: THREE.MeshBasicMaterial;
 }
 let shared: Shared | null = null;
 
@@ -106,6 +109,8 @@ function makeShared(gradient: THREE.DataTexture): Shared {
     beam: new THREE.MeshBasicMaterial({ map: beamTex, color: 0xffeebb, transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
     halo: new THREE.SpriteMaterial({ map: dot, color: 0xfff0c0, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }),
     haloRed: new THREE.SpriteMaterial({ map: dot, color: 0xff3020, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }),
+    haloM: new THREE.MeshBasicMaterial({ map: dot, color: 0xfff0c0, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }),
+    haloRedM: new THREE.MeshBasicMaterial({ map: dot, color: 0xff3020, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }),
   };
 }
 
@@ -115,6 +120,8 @@ export function setCarNight(night: number): void {
   shared.beam.opacity = 0.1 + 0.5 * night;
   shared.halo.opacity = 0.35 + 0.65 * night;
   shared.haloRed.opacity = 0.3 + 0.6 * night;
+  shared.haloM.opacity = shared.halo.opacity;
+  shared.haloRedM.opacity = shared.haloRed.opacity;
   shared.head.color.setScalar(1).multiplyScalar(0.85 + 0.15 * night).lerp(HEAD_TINT, 0.3);
 }
 const HEAD_TINT = new THREE.Color(0xfff6cf);
@@ -129,9 +136,10 @@ export class Car {
   private s: number;
   private off: number;
   private top: number;
-  private yaw = 0;
+  yaw = 0;
   private tails: THREE.Mesh[] = [];
-  private braking = false;
+  braking = false;
+  color = 0xffffff;
   readonly kind: 'car' | 'bus';
   readonly len: number;
   readonly wid: number;
@@ -144,7 +152,6 @@ export class Car {
     this.kind = kind;
     this.len = kind === 'bus' ? BUS_LEN : LEN;
     this.wid = kind === 'bus' ? BUS_WID : WID;
-    const paint = new THREE.MeshToonMaterial({ color: COLORS[seed % COLORS.length], gradientMap: gradient });
     const add = (g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0, shadow = true) => {
       const mesh = new THREE.Mesh(g, m);
       mesh.castShadow = shadow;
@@ -176,27 +183,8 @@ export class Car {
       this.place();
       return;
     }
-    add(k.lower, paint);
-    add(k.glassG, k.glass);
-    add(k.roof, paint);
-    add(k.bumper, k.trim, 0, 0.42, LEN / 2 + 0.02);
-    add(k.bumper, k.trim, 0, 0.42, -LEN / 2 - 0.02);
-    for (const sx of [-1, 1]) {
-      for (const z of [1.4, -1.35]) {
-        add(k.wheel, k.tire, sx * (WID / 2 - 0.02), 0.34, z);
-        add(k.hub, k.hubM, sx * (WID / 2 + 0.01), 0.34, z, false);
-      }
-      add(k.lamp, k.head, sx * 0.58, 0.76, LEN / 2 + 0.07, false);
-      this.tails.push(add(k.lamp, k.tail, sx * 0.62, 0.8, -LEN / 2 - 0.07, false));
-      add(k.mirror, paint, sx * (WID / 2 + 0.1), 1.0, 0.75, false);
-      for (const hz of [LEN / 2 + 0.12, -LEN / 2 - 0.12]) {
-        const sp = new THREE.Sprite(hz > 0 ? k.halo : k.haloRed);
-        sp.scale.setScalar(hz > 0 ? 1.1 : 0.8);
-        sp.position.set(sx * (hz > 0 ? 0.58 : 0.62), hz > 0 ? 0.76 : 0.8, hz);
-        this.group.add(sp);
-      }
-    }
-    add(k.beamG, k.beam, 0, 0, 0, false).renderOrder = 2;
+    // cars carry no meshes of their own: the Fleet's CarBatch draws them all instanced
+    this.color = COLORS[seed % COLORS.length];
     this.lane = lane;
     this.dir = dir;
     this.s = s;
@@ -221,8 +209,8 @@ export class Car {
   private gap(): number {
     let best = Infinity;
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-    for (const o of this.fleet.cars) {
-      if (o === this || !o.active) continue;
+    for (const o of this.fleet.active) {
+      if (o === this) continue;
       if (Math.abs(o.pos.x - this.pos.x) > 26 || Math.abs(o.pos.z - this.pos.z) > 26) continue;
       const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z;
       const ahead = dx * fx + dz * fz;
@@ -304,6 +292,7 @@ export class Car {
   setActive(on: boolean): void {
     if (on === this.active) return;
     this.active = on;
+    if (this.kind === 'car') return;
     this.group.visible = on;
     // parked cars leave the scene graph entirely, so three doesn't walk their matrices every render
     if (on) this.home?.add(this.group);
@@ -314,10 +303,119 @@ export class Car {
   }
 }
 
+
+const TAIL = new THREE.Color(0xc01818);
+const BRAKE = new THREE.Color(0xff4a3a);
+
+/** Merge geometry pieces (each placed by a local offset) into one non-indexed buffer. */
+function mergeAt(parts: [THREE.BufferGeometry, number, number, number][]): THREE.BufferGeometry {
+  const out = parts.map(([g, x, y, z]) => {
+    const c = g.index ? g.toNonIndexed() : g.clone();
+    for (const name of Object.keys(c.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') c.deleteAttribute(name);
+    return c.translate(x, y, z);
+  });
+  return mergeGeometries(out, false)!;
+}
+
+/**
+ * Every ordinary car, drawn with ~10 InstancedMeshes instead of ~25 objects each: paint (coloured per car),
+ * glass, trim, tyres, hubs, lamps, glow halos and headlight beams. Cars share one matrix buffer.
+ */
+class CarBatch {
+  readonly group = new THREE.Group();
+  private paint: THREE.InstancedMesh;
+  private tails: THREE.InstancedMesh;
+  private halosF: THREE.InstancedMesh;
+  private halosR: THREE.InstancedMesh;
+  private bodyMeshes: THREE.InstancedMesh[] = [];
+
+  constructor(gradient: THREE.DataTexture, private max: number) {
+    if (!shared) shared = makeShared(gradient);
+    const k = shared;
+    const white = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient });
+    const W = WID / 2;
+    const paintG = mergeAt([[k.lower, 0, 0, 0], [k.roof, 0, 0, 0], [k.mirror, -(W + 0.1), 1.0, 0.75], [k.mirror, W + 0.1, 1.0, 0.75]]);
+    const trimG = mergeAt([[k.bumper, 0, 0.42, LEN / 2 + 0.02], [k.bumper, 0, 0.42, -LEN / 2 - 0.02]]);
+    const tireG = mergeAt([-1, 1].flatMap((sx) => [1.4, -1.35].map((z) => [k.wheel, sx * (W - 0.02), 0.34, z] as [THREE.BufferGeometry, number, number, number])));
+    const hubG = mergeAt([-1, 1].flatMap((sx) => [1.4, -1.35].map((z) => [k.hub, sx * (W + 0.01), 0.34, z] as [THREE.BufferGeometry, number, number, number])));
+    const headG = mergeAt([-1, 1].map((sx) => [k.lamp, sx * 0.58, 0.76, LEN / 2 + 0.07] as [THREE.BufferGeometry, number, number, number]));
+    const tailG = mergeAt([-1, 1].map((sx) => [k.lamp, sx * 0.62, 0.8, -LEN / 2 - 0.07] as [THREE.BufferGeometry, number, number, number]));
+
+    const make = (g: THREE.BufferGeometry, m: THREE.Material, n: number, shadow: boolean, tint = false) => {
+      const im = new THREE.InstancedMesh(g, m, n);
+      im.count = 0;
+      im.castShadow = shadow;
+      im.frustumCulled = false;
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      if (tint) {
+        im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+        im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      }
+      this.group.add(im);
+      return im;
+    };
+    this.paint = make(paintG, white, max, true, true);
+    const glass = make(k.glassG, k.glass, max, true);
+    const trim = make(trimG, k.trim, max, false);
+    const tires = make(tireG, k.tire, max, true);
+    const hubs = make(hubG, k.hubM, max, false);
+    const heads = make(headG, k.head, max, false);
+    this.tails = make(tailG, new THREE.MeshBasicMaterial({ color: 0xffffff }), max, false, true);
+    const beams = make(k.beamG, k.beam, max, false);
+    beams.renderOrder = 2;
+    this.bodyMeshes = [glass, trim, tires, hubs, heads, this.tails, beams];
+    for (const m of this.bodyMeshes) m.instanceMatrix = this.paint.instanceMatrix;
+
+    const quad = new THREE.PlaneGeometry(1, 1);
+    this.halosF = make(quad, k.haloM, max * 2, false);
+    this.halosR = make(quad, k.haloRedM, max * 2, false);
+    this.halosF.renderOrder = this.halosR.renderOrder = 2;
+  }
+
+  private m = new THREE.Matrix4();
+  private h = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private v = new THREE.Vector3();
+  private sc = new THREE.Vector3();
+  private one = new THREE.Vector3(1, 1, 1);
+  private c = new THREE.Color();
+
+  update(cars: Car[], camera: THREE.Camera): void {
+    let n = 0;
+    const cq = camera.quaternion;
+    for (const car of cars) {
+      if (car.kind !== 'car' || n >= this.max) continue;
+      this.q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, car.yaw);
+      this.m.compose(car.pos, this.q, this.one);
+      this.paint.setMatrixAt(n, this.m);
+      this.paint.setColorAt(n, this.c.setHex(car.color));
+      this.tails.setColorAt(n, car.braking ? BRAKE : TAIL);
+      // glows always face the camera
+      for (let i = 0; i < 2; i++) {
+        const sx = i ? 1 : -1;
+        this.v.set(sx * 0.58, 0.76, LEN / 2 + 0.12).applyMatrix4(this.m);
+        this.halosF.setMatrixAt(n * 2 + i, this.h.compose(this.v, cq, this.sc.setScalar(1.1)));
+        this.v.set(sx * 0.62, 0.8, -LEN / 2 - 0.12).applyMatrix4(this.m);
+        this.halosR.setMatrixAt(n * 2 + i, this.h.compose(this.v, cq, this.sc.setScalar(0.8)));
+      }
+      n++;
+    }
+    this.paint.count = n;
+    for (const m of this.bodyMeshes) m.count = n;
+    this.halosF.count = this.halosR.count = n * 2;
+    this.paint.instanceMatrix.needsUpdate = true;
+    for (const m of [this.paint, this.tails]) m.instanceColor!.needsUpdate = true;
+    this.halosF.instanceMatrix.needsUpdate = this.halosR.instanceMatrix.needsUpdate = true;
+  }
+}
+
 /** All the traffic. Builds a lane graph from the mapped roads and spawns cars on it. */
 export class Fleet {
   readonly lanes: Lane[] = [];
   readonly cars: Car[] = [];
+  /** cars near the rat this frame: the only ones simulated and drawn */
+  readonly active: Car[] = [];
+  private batch: CarBatch | null = null;
   private onewayDirs: (1 | -1)[] = [];
 
   constructor(roads: CarRoad[], readonly terrainAt: (x: number, z: number) => number) {
@@ -360,8 +458,26 @@ export class Fleet {
     return { x: a.x + (b.x - a.x) * t, z: a.y + (b.y - a.y) * t, tx, tz };
   }
 
+  /** Switch cars on within `r` metres of (x, z) and off beyond (a little hysteresis stops flicker). */
+  activate(x: number, z: number, r: number): void {
+    this.active.length = 0;
+    for (const c of this.cars) {
+      const d = Math.hypot(c.pos.x - x, c.pos.z - z);
+      const on = d < (c.active ? r * 1.15 : r);
+      c.setActive(on);
+      if (on) this.active.push(c);
+    }
+  }
+
+  /** Draw the active cars. */
+  render(camera: THREE.Camera): void {
+    this.batch?.update(this.active, camera);
+  }
+
   spawn(gradient: THREE.DataTexture, scene: THREE.Scene, count: number): void {
     if (!this.lanes.length) return;
+    this.batch = new CarBatch(gradient, Math.min(count, 700));
+    scene.add(this.batch.group);
     // weight lanes by length so long streets get more cars
     const total = this.lanes.reduce((a, l) => a + l.len, 0);
     for (let i = 0; i < count; i++) {
@@ -370,7 +486,6 @@ export class Fleet {
       const L = this.lanes[li];
       const dir: 1 | -1 = L.oneway ? 1 : Math.random() < 0.5 ? 1 : -1;
       const car = new Car(gradient, this, li, Math.random() * L.len, dir, i);
-      scene.add(car.group);
       this.cars.push(car);
     }
   }

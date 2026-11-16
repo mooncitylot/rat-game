@@ -5,9 +5,9 @@ import type { Ring } from './world';
 
 const SCALE = 1.2; // a ~1.8 m figure becomes ~2.2 m next to 2.6 m doors
 const REACH = 2.0; // how close the rat must be to get noticed
-const SIDEWALK_Y = 0.22;
-const CURB = 1.6; // ring corner -> curb (half the sidewalk)
-const LANE = 0.55; // everyone keeps to the right
+export const SIDEWALK_Y = 0.22;
+export const CURB = 1.6; // ring corner -> curb (half the sidewalk)
+export const LANE = 0.55; // everyone keeps to the right
 
 // ------------------------------------------------------------------------------------------------
 // Sidewalk network: each block has a loop of 4 corners; zebra crossings link facing corners of neighbours.
@@ -118,12 +118,12 @@ export class SidewalkNet implements Net {
 // Looks
 // ------------------------------------------------------------------------------------------------
 
-const SKIN = [0xf1c8a5, 0xe3b088, 0xc98d62, 0xa56a43, 0x7a4a2e, 0x55331f];
-const HAIR = [0x16110e, 0x2c1b12, 0x4a3022, 0x7a5232, 0xb98b4d, 0xd6c28a, 0x8a8a8a, 0xc0c0c0, 0x8a3a1c, 0x2fa6a0, 0xd94f8a];
-const JACKET = [0x8a2f3a, 0x2f4a7a, 0x3a6a4a, 0xb08a3a, 0x5a3a7a, 0x3a3f4a, 0x9a5a2a, 0x2a6a6a, 0xd24a2e, 0xe0c24a, 0x4a4a52, 0xe8e2d0, 0x1c1c22];
-const PANTS = [0x2a3550, 0x1c1c22, 0x4a4a52, 0x8a7a5a, 0x3a4a6a, 0x5a3a2a, 0x6a6a72];
+export const SKIN = [0xf1c8a5, 0xe3b088, 0xc98d62, 0xa56a43, 0x7a4a2e, 0x55331f];
+export const HAIR = [0x16110e, 0x2c1b12, 0x4a3022, 0x7a5232, 0xb98b4d, 0xd6c28a, 0x8a8a8a, 0xc0c0c0, 0x8a3a1c, 0x2fa6a0, 0xd94f8a];
+export const JACKET = [0x8a2f3a, 0x2f4a7a, 0x3a6a4a, 0xb08a3a, 0x5a3a7a, 0x3a3f4a, 0x9a5a2a, 0x2a6a6a, 0xd24a2e, 0xe0c24a, 0x4a4a52, 0xe8e2d0, 0x1c1c22];
+export const PANTS = [0x2a3550, 0x1c1c22, 0x4a4a52, 0x8a7a5a, 0x3a4a6a, 0x5a3a2a, 0x6a6a72];
 const SHOES = [0x17151a, 0xf2eee0, 0x4a2a1a, 0xc8321f, 0x2a3550];
-const UMBRELLA = [0xe8452e, 0x2f4a7a, 0xf2c230, 0x1c1c22, 0x3f8a5a, 0xd94f8a, 0xe8e2d0];
+export const UMBRELLA = [0xe8452e, 0x2f4a7a, 0xf2c230, 0x1c1c22, 0x3f8a5a, 0xd94f8a, 0xe8e2d0];
 
 const geos = new Map<string, THREE.BufferGeometry>();
 const mats = new Map<string, THREE.MeshToonMaterial>();
