@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { Stadium } from './wrigley';
 import { CityCollider, inPoly, makePoly, type Poly } from './citycollider';
 import { buildLakefront } from './lakefront';
+import { buildLakeShoreDrive } from './lakeshore';
 import { buildSeawall, shoreEdges, SEAWALL_APRON, type ShoreRing } from './seawall';
 import { FacadeKit, loadStyled } from './facade';
 import { SHOP_NAMES } from './paint';
@@ -560,13 +561,18 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const trailShoulders: THREE.BufferGeometry[] = [];
   const trailDashes: THREE.Matrix4[] = [];
   const pendingWalks: (typeof data.roads)[number][] = [];
+  const motorways: (typeof data.roads)[number][] = [];
   const paintRoads: { pts: P2[]; half: number; oneway: boolean; lined: boolean }[] = [];
 
   for (const r of data.roads) {
     if (r.tu) continue;
     const alley = r.k === 'alley';
     if (r.n && !r.br && !alley && (DRIVABLE.has(r.k) || WALKABLE.has(r.k))) namedStreets.add(r.p, DRIVABLE.has(r.k) ? r.w / 2 : r.w / 2 + 1, r.n);
-    if (DRIVABLE.has(r.k)) {
+    if (r.k === 'motorway') {
+      // Lake Shore Drive is built as an elevated deck further down (lakeshore.ts); keep it clear of anything placed on the ground
+      for (let i = 0; i + 1 < r.p.length; i++) segs.add({ ax: r.p[i][0], az: r.p[i][1], bx: r.p[i + 1][0], bz: r.p[i + 1][1], half: r.w / 2, alley: false });
+      motorways.push(r);
+    } else if (DRIVABLE.has(r.k)) {
       roadGeos.push(ribbon(r.p, r.w, terrain, 0.06, 8));
       for (let i = 0; i + 1 < r.p.length; i++) segs.add({ ax: r.p[i][0], az: r.p[i][1], bx: r.p[i + 1][0], bz: r.p[i + 1][1], half: r.w / 2, alley });
       paintRoads.push({ pts: r.p, half: r.w / 2, oneway: !!r.o, lined: !alley && r.k !== 'service' && r.w >= 11 });
@@ -1335,6 +1341,48 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     for (const b of bushes) collider.addBox({ minX: b.x - 0.45 * b.s, maxX: b.x + 0.45 * b.s, minZ: b.z - 0.45 * b.s, maxZ: b.z + 0.45 * b.s, top: terrain.at(b.x, b.z) + 0.9 * b.s });
   }
 
+  // ---- Lake Shore Drive: elevated, with a median barrier, piers and exit ramps down to the side roads ----
+  const lsd = (() => {
+    const len = (p: P2[]) => p.reduce((a, q, i) => (i ? a + Math.hypot(q[0] - p[i - 1][0], q[1] - p[i - 1][1]) : 0), 0);
+    const mains = motorways.filter((r) => len(r.p) > 300);
+    const short = motorways.filter((r) => len(r.p) <= 300).map((r) => r.p);
+    // chain connectors that meet end to start (Belmont: the ramp and its foot are two OSM ways)
+    const chains: P2[][] = [];
+    const used = new Set<number>();
+    short.forEach((a, i) => {
+      if (used.has(i)) return;
+      let chain = [...a];
+      used.add(i);
+      for (let again = true; again; ) {
+        again = false;
+        short.forEach((b, j) => {
+          if (used.has(j)) return;
+          const e = chain[chain.length - 1];
+          if (Math.hypot(b[0][0] - e[0], b[0][1] - e[1]) < 1) {
+            chain = chain.concat(b.slice(1));
+            used.add(j);
+            again = true;
+          }
+        });
+      }
+      chains.push(chain);
+    });
+    return buildLakeShoreDrive({
+      group, gradient, roadMat,
+      terrainAt: (x, z) => terrain.at(x, z),
+      kit: { MeshBuilder, resample, sides },
+      main: mains.map((r) => ({ pts: r.p, median: r.p[r.p.length - 1][1] > r.p[0][1] })),
+      connectors: chains,
+      exits: [{ name: 'Addison', from: [1256, -62], to: [1252, -169], toDir: [-0.38, -0.92] }],
+      addBox: (b) => collider.addBox(b),
+      addPoly: (p) => collider.addPoly(p),
+      windCCW,
+      lamp: (x, y, z, dx, dz, h) => {
+        lamps.push(streetLamps.add(x, y, z, Math.atan2(-dz, dx), { h, banner: false }));
+      },
+    });
+  })();
+
   // ---- the lake edge: stepped limestone revetment, and the harbour quay ----
   buildSeawall({
     group, gradient, rand,
@@ -1501,7 +1549,11 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     rings: [],
     walkNet: net,
     walkStarts: net.starts,
-    carRoads: data.roads.filter((r) => !r.tu && !r.br && DRIVABLE.has(r.k) && r.k !== 'alley' && r.k !== 'service' && r.w >= 7).map((r) => ({ pts: r.p, w: r.w, oneway: !!r.o })),
+    carRoads: [
+      ...data.roads.filter((r) => !r.tu && !r.br && DRIVABLE.has(r.k) && r.k !== 'motorway' && r.k !== 'alley' && r.k !== 'service' && r.w >= 7).map((r) => ({ pts: r.p, w: r.w, oneway: !!r.o })),
+      ...lsd.lanes,
+    ],
+    carHeightAt: (x, z) => lsd.surfaceAt(x, z) ?? terrain.at(x, z),
     terrainAt: (x, z) => terrain.at(x, z),
     streetAt: (x, z) => namedStreets.at(x, z),
     catRoutes: catRoutes.sort(() => rand() - 0.5).slice(0, 4),

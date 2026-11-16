@@ -156,7 +156,7 @@ const crowd = new Crowd(gradient, world.walkNet, world.walkStarts, CROWD, CROWD_
 scene.add(crowd.group);
 
 // traffic
-const fleet = new Fleet(world.carRoads ?? [], world.terrainAt ?? (() => 0));
+const fleet = new Fleet(world.carRoads ?? [], world.carHeightAt ?? world.terrainAt ?? (() => 0));
 fleet.spawn(gradient, scene, 650);
 fleet.spawnBuses(gradient, scene, 16);
 {
