@@ -22,6 +22,8 @@ export interface LakefrontCtx {
   trails: { pts: P2[]; half: number; kind: string }[];
   /** lake and harbour outlines */
   water: P2[][];
+  /** shorelines that stay natural (reeds, cattails, rip-rap); the walled lake and harbour edges are left out */
+  wildShores?: P2[][];
   /** a pedestrian-scale lamp that also lights up at night */
   addLamp: (x: number, z: number, nx: number, nz: number) => void;
   /** a Poly Haven prop with a collision box */
@@ -475,7 +477,7 @@ export function buildLakefront(ctx: LakefrontCtx): { benches: number; lamps: num
 
   // ---- the shore: reeds and cattails at the waterline, boulders for rip-rap ----
   const reeds: Item[] = [], cattails: Item[] = [], boulders: Item[] = [];
-  for (const poly of ctx.water) {
+  for (const poly of ctx.wildShores ?? ctx.water) {
     if (poly.length < 3) continue;
     const ring = [...poly, poly[0]];
     walk(ring, 2.2, rand() * 2, (x, z, tx, tz) => {

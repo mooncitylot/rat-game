@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { Stadium } from './wrigley';
 import { CityCollider, inPoly, makePoly, type Poly } from './citycollider';
 import { buildLakefront } from './lakefront';
+import { buildSeawall, shoreEdges, SEAWALL_APRON, type ShoreRing } from './seawall';
 import { FacadeKit, loadStyled } from './facade';
 import { SHOP_NAMES } from './paint';
 import type { Box } from './physics';
@@ -135,6 +136,47 @@ class Terrain {
     this.x0 = d.bounds.x0;
     this.z0 = d.bounds.z0;
     this.h = Float32Array.from(d.heights.data, (v) => (v / 100) * exag);
+  }
+  /**
+   * Shape the land to meet the lake at a seawall: the bed is flat inside every shoreline, and on the land side it
+   * stays at promenade height for a few metres before easing back to the mapped ground.
+   */
+  carve(rings: ShoreRing[], edges: { ax: number; az: number; bx: number; bz: number; ring: number }[], floorY: number, topY: number): void {
+    const reach = 46;
+    const boxes = rings.map((r) => {
+      const xs = r.pts.map((q) => q[0]), zs = r.pts.map((q) => q[1]);
+      return { x0: Math.min(...xs) - reach, x1: Math.max(...xs) + reach, z0: Math.min(...zs) - reach, z1: Math.max(...zs) + reach };
+    });
+    for (let j = 0; j < this.nz; j++) {
+      for (let i = 0; i < this.nx; i++) {
+        const x = this.x0 + i * this.step, z = this.z0 + j * this.step;
+        let best = Infinity, bestRing = -1;
+        for (const e of edges) {
+          const b = boxes[e.ring];
+          if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) continue;
+          const dx = e.bx - e.ax, dz = e.bz - e.az;
+          const t = Math.max(0, Math.min(1, ((x - e.ax) * dx + (z - e.az) * dz) / (dx * dx + dz * dz || 1)));
+          const d = Math.hypot(x - e.ax - dx * t, z - e.az - dz * t);
+          if (d < best) {
+            best = d;
+            bestRing = e.ring;
+          }
+        }
+        // inside any shoreline? then it is lake bed (even far from a real edge, e.g. along the map border)
+        let wet = false;
+        for (let r = 0; r < rings.length; r++) {
+          const b = boxes[r];
+          if (x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1 && inPoly(rings[r].pts, x, z)) wet = true;
+        }
+        const k = j * this.nx + i;
+        if (wet) this.h[k] = Math.min(this.h[k], floorY);
+        else if (bestRing >= 0 && best < reach) {
+          const w = Math.max(0, Math.min(1, (best - SEAWALL_APRON) / (reach - SEAWALL_APRON)));
+          const sm = w * w * (3 - 2 * w);
+          this.h[k] = topY * (1 - sm) + this.h[k] * sm;
+        }
+      }
+    }
   }
   at(x: number, z: number): number {
     const fx = Math.max(0, Math.min(this.nx - 1.001, (x - this.x0) / this.step));
@@ -395,6 +437,21 @@ const PARK_COLOR: Record<string, number> = {
 export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { exag: number }): World {
   const rand = rng(20240607);
   const terrain = new Terrain(data, opts.exag);
+  // shorelines: the open lake gets stepped limestone, the big harbour a vertical quay; small ponds stay natural
+  const shoreRings: ShoreRing[] = [];
+  data.water.forEach((pts, wi) => {
+    if (pts.length < 3) return;
+    if (wi === data.lakeIdx) shoreRings.push({ pts, kind: 'lake' });
+    else if (Math.abs(polyArea(pts)) > 30000) shoreRings.push({ pts, kind: 'harbor' });
+  });
+  const shoreFloor = terrain.at(data.bounds.x1 - 20, 0);
+  const shoreTop = shoreFloor + 1.0;
+  const isBorderEdge = (a: P2, b: P2): boolean => {
+    const out = (q: P2) => q[0] >= data.bounds.x1 - 1 || q[1] <= data.bounds.z0 - 1 || q[1] >= data.bounds.z1 + 1;
+    return out(a) && out(b);
+  };
+  const shoreEdgeList = shoreEdges(shoreRings, isBorderEdge);
+  terrain.carve(shoreRings, shoreEdgeList, shoreFloor, shoreTop);
   // Wrigley Field is built by hand: drop the stray OSM pieces (dugouts, screens, the grandstand roof outline) inside it
   const stadium = new Stadium((x, z) => terrain.at(x, z));
   data.buildings = data.buildings.filter((b) => {
@@ -1278,6 +1335,19 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     for (const b of bushes) collider.addBox({ minX: b.x - 0.45 * b.s, maxX: b.x + 0.45 * b.s, minZ: b.z - 0.45 * b.s, maxZ: b.z + 0.45 * b.s, top: terrain.at(b.x, b.z) + 0.9 * b.s });
   }
 
+  // ---- the lake edge: stepped limestone revetment, and the harbour quay ----
+  buildSeawall({
+    group, gradient, rand,
+    terrainAt: (x, z) => terrain.at(x, z),
+    floorY: shoreFloor,
+    waterY: lake.y,
+    topY: shoreTop,
+    rings: shoreRings,
+    isBorder: isBorderEdge,
+    addPoly: (p) => collider.addPoly(p),
+    windCCW,
+  });
+
   // ---- the Lakefront Trail: benches, lamps, groves, meadow, reeds and rocks ----
   {
     buildLakefront({
@@ -1296,6 +1366,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       treeSpots,
       trails: lakeTrails,
       water: waterPolys.map((w) => w.pts),
+      wildShores: waterPolys.map((w) => w.pts).filter((pts) => !shoreRings.some((r) => r.pts === pts)),
       addLamp: (x, z, nx, nz) => addLamp(x, z, nx, nz, 1.15, 4.4),
       solid,
       windUniform,
