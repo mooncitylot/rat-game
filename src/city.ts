@@ -340,6 +340,43 @@ class SegIndex {
   }
 }
 
+/** Named streets, for the street-name HUD: which named street (or its sidewalk band) is (x, z) on? */
+class NamedStreets {
+  private cell = 32;
+  private grid = new Map<number, { ax: number; az: number; bx: number; bz: number; reach: number; name: string }[]>();
+  add(pts: P2[], half: number, name: string): void {
+    const reach = half + 5.5; // the kerb plus the sidewalk beside it
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const s = { ax, az, bx, bz, reach, name };
+      for (let ix = Math.floor((Math.min(ax, bx) - reach) / this.cell); ix <= Math.floor((Math.max(ax, bx) + reach) / this.cell); ix++) {
+        for (let iz = Math.floor((Math.min(az, bz) - reach) / this.cell); iz <= Math.floor((Math.max(az, bz) + reach) / this.cell); iz++) {
+          const k = ix * 100003 + iz;
+          let l = this.grid.get(k);
+          if (!l) this.grid.set(k, (l = []));
+          l.push(s);
+        }
+      }
+    }
+  }
+  /** the name of the street whose corridor contains (x, z); the closest one wins at junctions */
+  at(x: number, z: number): string | null {
+    const l = this.grid.get(Math.floor(x / this.cell) * 100003 + Math.floor(z / this.cell));
+    if (!l) return null;
+    let best: string | null = null, bestD = Infinity;
+    for (const s of l) {
+      const dx = s.bx - s.ax, dz = s.bz - s.az;
+      const t = Math.max(0, Math.min(1, ((x - s.ax) * dx + (z - s.az) * dz) / (dx * dx + dz * dz || 1)));
+      const d = Math.hypot(x - (s.ax + dx * t), z - (s.az + dz * t));
+      if (d < s.reach && d / s.reach < bestD) {
+        bestD = d / s.reach;
+        best = s.name;
+      }
+    }
+    return best;
+  }
+}
+
 // ------------------------------------------------------------------------------------------------
 // the city
 // ------------------------------------------------------------------------------------------------
@@ -458,6 +495,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const footways: { pts: P2[]; crossing: boolean }[] = [];
   const slabs: { pts: P2[]; half: number }[] = [];
   const streetLines: { pts: P2[]; half: number; name: string }[] = [];
+  const namedStreets = new NamedStreets();
   const alleyLines: { pts: P2[]; half: number }[] = [];
   const flat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
   const zebras: THREE.Matrix4[] = [];
@@ -470,6 +508,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   for (const r of data.roads) {
     if (r.tu) continue;
     const alley = r.k === 'alley';
+    if (r.n && !r.br && !alley && (DRIVABLE.has(r.k) || WALKABLE.has(r.k))) namedStreets.add(r.p, DRIVABLE.has(r.k) ? r.w / 2 : r.w / 2 + 1, r.n);
     if (DRIVABLE.has(r.k)) {
       roadGeos.push(ribbon(r.p, r.w, terrain, 0.06, 8));
       for (let i = 0; i + 1 < r.p.length; i++) segs.add({ ax: r.p[i][0], az: r.p[i][1], bx: r.p[i + 1][0], bz: r.p[i + 1][1], half: r.w / 2, alley });
@@ -1393,6 +1432,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     walkStarts: net.starts,
     carRoads: data.roads.filter((r) => !r.tu && !r.br && DRIVABLE.has(r.k) && r.k !== 'alley' && r.k !== 'service' && r.w >= 7).map((r) => ({ pts: r.p, w: r.w, oneway: !!r.o })),
     terrainAt: (x, z) => terrain.at(x, z),
+    streetAt: (x, z) => namedStreets.at(x, z),
     catRoutes: catRoutes.sort(() => rand() - 0.5).slice(0, 4),
     beacon,
     signals,

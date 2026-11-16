@@ -61,6 +61,7 @@ export interface World {
   };
   carRoads?: { pts: [number, number][]; w: number; oneway: boolean }[]; // drivable streets
   terrainAt?: (x: number, z: number) => number;
+  streetAt?: (x: number, z: number) => string | null; // full OSM name of the street (or its sidewalk) at a point
   catRoutes: THREE.Vector2[][]; // alley patrols
   beacon: THREE.Object3D;
   signals: TrafficSignals;

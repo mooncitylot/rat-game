@@ -13,6 +13,14 @@
   #hearts { color: #ff5a6a; font-size: 24px; letter-spacing: .15em; }
   #hearts .off { color: #4a3a48; }
   #clock { position: fixed; top: 16px; right: 16px; font-size: 18px; text-align: right; letter-spacing: .08em; text-shadow: 2px 2px 0 #14121c; pointer-events: none; }
+  #compass { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); width: min(320px, 44vw); text-align: center; pointer-events: none; text-shadow: 2px 2px 0 #14121c; }
+  #cstrip { position: relative; height: 26px; overflow: hidden; border-bottom: 2px solid #efe6d2; box-shadow: 0 2px 0 #14121c; -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent); }
+  #cstrip span { position: absolute; top: 0; transform: translateX(-50%); font-size: 15px; letter-spacing: .05em; will-change: left; }
+  #cstrip span.card { font-weight: bold; font-size: 18px; } #cstrip span.n { color: #ff5a6a; }
+  #cstrip span.tick { top: 4px; font-size: 10px; opacity: .6; }
+  #cpoint { width: 0; height: 0; margin: 0 auto; border: 6px solid transparent; border-bottom-color: #ffb030; border-top: 0; }
+  #street { margin-top: 2px; min-height: 26px; font-size: 18px; letter-spacing: .14em; text-transform: uppercase; opacity: 0; transition: opacity .35s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #street.on { opacity: 1; }
   #credit { position: fixed; bottom: 8px; right: 12px; font-size: 10px; opacity: .65; pointer-events: none; text-shadow: 1px 1px 0 #14121c; }
   #toast { position: fixed; top: 22%; left: 0; right: 0; text-align: center; font-size: 34px; letter-spacing: .2em; text-shadow: 3px 3px 0 #14121c; pointer-events: none; opacity: 0; transition: opacity .25s; }
   #toast.on { opacity: 1; }
@@ -49,6 +57,7 @@
   <div>CARRYING <b id="carried">0</b> &nbsp;·&nbsp; NEST <b id="banked">0</b> / <span id="total">0</span></div>
   <div>STAR POWER <b id="stars">0</b> ★</div>
 </div>
+<div id="compass"><div id="cstrip"></div><div id="cpoint"></div><div id="street"></div></div>
 <div id="judges"></div>
 <div id="stats"></div>
 <div id="clock"><div id="time">--:--</div><div id="wx"></div></div>

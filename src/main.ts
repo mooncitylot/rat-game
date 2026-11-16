@@ -396,6 +396,62 @@ const BASE_FOV = 60;
 let stepT = 0;
 let lastFuel = '', lastClock = '', lastWx = '';
 
+// ---- compass strip + street name ----
+// north is -z, east is +x; the camera looks along (-sin yaw, -cos yaw), so the compass bearing is -yaw
+const COMPASS_SPAN = 100; // degrees visible across the strip
+const compassMarks: { el: HTMLSpanElement; deg: number }[] = [];
+{
+  const strip = $('cstrip');
+  const names: Record<number, string> = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+  for (let d = 0; d < 360; d += 15) {
+    const el = document.createElement('span');
+    const name = names[d];
+    el.textContent = name ?? '|';
+    el.className = name ? (name.length === 1 ? `card${d === 0 ? ' n' : ''}` : '') : 'tick';
+    strip.appendChild(el);
+    compassMarks.push({ el, deg: d });
+  }
+}
+let lastBearing = -999;
+function drawCompass(yaw: number): void {
+  const bearing = (((-yaw * 180) / Math.PI) % 360 + 360) % 360;
+  if (Math.abs(bearing - lastBearing) < 0.4) return;
+  lastBearing = bearing;
+  for (const m of compassMarks) {
+    let off = m.deg - bearing;
+    if (off > 180) off -= 360;
+    else if (off < -180) off += 360;
+    if (Math.abs(off) > COMPASS_SPAN / 2 + 8) m.el.style.display = 'none';
+    else {
+      m.el.style.display = '';
+      m.el.style.left = `${50 + (off / COMPASS_SPAN) * 100}%`;
+    }
+  }
+}
+const STREET_ABBR: [RegExp, string][] = [
+  [/^North /, 'N '], [/^South /, 'S '], [/^East /, 'E '], [/^West /, 'W '],
+  [/ Avenue$/, ' Ave'], [/ Street$/, ' St'], [/ Boulevard$/, ' Blvd'], [/ Place$/, ' Pl'], [/ Terrace$/, ' Ter'], [/ Drive$/, ' Dr'],
+];
+const prettyStreet = (n: string): string => STREET_ABBR.reduce((a, [re, to]) => a.replace(re, to), n);
+let streetShown = '', streetClear = 0, streetPoll = 0;
+function updateStreet(dt: number): void {
+  streetPoll -= dt;
+  if (streetPoll > 0) return;
+  streetPoll = 0.15;
+  // only while travelling along the ground (not climbing, flying or up on a roof)
+  const walking = rat.mode === 'walk' && rat.grounded && rat.speed > 0.4 && rat.pos.y - world.collider.terrain(rat.pos.x, rat.pos.z) < 1.2;
+  const name = walking ? world.streetAt?.(rat.pos.x, rat.pos.z) ?? null : null;
+  const el = $('street');
+  if (name) {
+    streetClear = 1.6; // linger briefly so junction flicker and pauses don't blink the label
+    if (name !== streetShown) {
+      streetShown = name;
+      el.textContent = prettyStreet(name);
+    }
+    el.classList.add('on');
+  } else if (streetClear > 0 && (streetClear -= 0.15) <= 0) el.classList.remove('on');
+}
+
 /** Pull the camera in front of any wall between it and the rat. */
 const aerial = new URLSearchParams(location.search).has('aerial'); // debug: whole-map view, no fog, no wall clipping
 if (aerial) {
@@ -566,6 +622,8 @@ function frame(now: number) {
   world.beacon.scale.set(pulse, 1, pulse);
 
   // ---- HUD ----
+  drawCompass(camYaw);
+  updateStreet(realDt);
   // (only touch the DOM when a value actually changes: style writes every frame cost layout time)
   const fuel = `${Math.round((rat.fuel / MAX_FUEL) * 100)}%`;
   if (fuel !== lastFuel) $('fuelbar').style.width = lastFuel = fuel;
