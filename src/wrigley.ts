@@ -612,44 +612,222 @@ export class Stadium {
       }
     }
 
-    // the marquee, on the corner at Clark and Addison
+    // ---------------- the main entrance: marquee corner at Clark and Addison ----------------
     {
       const target = [-108, 117];
-      const dx = target[0] - C[0], dz = target[1] - C[1];
-      const ang = Math.atan2(dz, dx);
-      const i = (((Math.round((ang / (Math.PI * 2)) * N) % N) + N) % N);
-      const o = this.at(i, 'out');
+      const ang = Math.atan2(target[1] - C[1], target[0] - C[0]);
+      const mi = (((Math.round((ang / (Math.PI * 2)) * N) % N) + N) % N);
+      const GREEN = 0x1f4d36, TERRA = 0xb4532f, DARK = 0x1b2029;
+      const lists: Record<string, THREE.BufferGeometry[]> = { green: [], cream: [], terra: [], dark: [], iron: [], pot: [] };
+      const grass: THREE.BufferGeometry[] = [];
+      const one = new THREE.Vector3(1, 1, 1);
+      const SPAN = 11; // wall segments each side of the marquee
+      const flagTex = canvas(128, 80, (c) => {
+        c.fillStyle = '#1f5fd0';
+        c.fillRect(0, 0, 128, 80);
+        c.fillStyle = '#ffffff';
+        c.font = '900 64px Impact, "Arial Black", sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText('W', 64, 44);
+      });
+      const plaque = (txt: string, w: number, h: number, size: number, fg = '#f4efe0', bg = '#1d4a35') =>
+        canvas(Math.round(w * 128), Math.round(h * 128), (c) => {
+          c.fillStyle = bg;
+          c.fillRect(0, 0, w * 128, h * 128);
+          c.strokeStyle = fg;
+          c.lineWidth = 3;
+          c.strokeRect(4, 4, w * 128 - 8, h * 128 - 8);
+          c.fillStyle = fg;
+          c.textAlign = 'center';
+          c.textBaseline = 'middle';
+          c.font = `700 ${size}px Arial, Helvetica, sans-serif`;
+          const lines = txt.split('\n');
+          lines.forEach((ln, k) => c.fillText(ln, (w * 128) / 2, (h * 128) / 2 + (k - (lines.length - 1) / 2) * size * 1.05));
+        });
+      const flatBoard = (tex: THREE.Texture, w: number, h: number, x: number, y: number, z: number, ux: number, uz: number): void => {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex }));
+        m.position.set(x + ux * 0.06, y, z + uz * 0.06);
+        m.rotation.y = Math.atan2(ux, uz);
+        group.add(m);
+      };
+      let acc = 0, planterN = 0, gateN = 0;
+      for (let j = mi - SPAN; j <= mi + SPAN; j++) {
+        const jj = ((j % N) + N) % N;
+        const A = this.at(jj, 'out'), B = this.at(jj + 1, 'out');
+        const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+        if (len < 0.5) continue;
+        let ox = (B[1] - A[1]) / len, oz = -(B[0] - A[0]) / len;
+        if (ox * (A[0] - C[0]) + oz * (A[1] - C[1]) < 0) {
+          ox = -ox;
+          oz = -oz;
+        }
+        const tx = oz, tz = -ox; // along the wall
+        const ry = Math.atan2(ox, oz);
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0));
+        const mx = (A[0] + B[0]) / 2, mz = (A[1] + B[1]) / 2;
+        const gy = terrainAt(mx, mz);
+        const top = Math.min(rim[jj], rim[jj + 1]) - 0.4 - gy; // rim[] is absolute; the slabs below are measured up from the ground
+        /** a slab hugging the wall: y0..y1 above the ground, `d0`..`d1` metres out from the brick */
+        const slab = (list: string, from: number, to: number, y0s: number, y1s: number, d0: number, d1: number, ext = 0.15): void => {
+          if (y1s <= y0s || to - from <= 0.01) return;
+          const cx = (from + to) / 2;
+          const g = new THREE.BoxGeometry(to - from + ext, y1s - y0s, d1 - d0);
+          g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(mx + tx * (cx - len / 2) + ox * ((d0 + d1) / 2), gy + (y0s + y1s) / 2, mz + tz * (cx - len / 2) + oz * ((d0 + d1) / 2)), q, one));
+          lists[list].push(g);
+        };
+        // ground storey: cream stucco, dark windows, green roll-up gates
+        slab('cream', 0, len, 0, 4.6, 0.04, 0.4);
+        slab('green', 0, len, 4.5, 4.95, 0.04, 0.55); // beam under the awning
+        // terracotta tile awning: tilted slab, higher at the wall
+        {
+          const g = new THREE.BoxGeometry(len + 0.15, 0.16, 2.8);
+          const m = new THREE.Matrix4().compose(new THREE.Vector3(mx + ox * 1.75, gy + 4.65, mz + oz * 1.75), q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.3, 0, 0))), one);
+          g.applyMatrix4(m);
+          lists.terra.push(g);
+          const lip = new THREE.BoxGeometry(len + 0.15, 0.22, 0.1);
+          lip.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(mx + ox * 3.08, gy + 4.07, mz + oz * 3.08), q, one));
+          lists.green.push(lip);
+        }
+        // windows every 5 m; a gate every other bay
+        for (let off = (-acc % 5 + 5) % 5 + 1.2; off < len - 0.6; off += 5) {
+          const bay = Math.floor((acc + off) / 5);
+          if (bay % 3 === 1) {
+            slab('dark', off - 1.8, off + 1.8, 0, 3.5, 0.38, 0.46, 0); // gate doors
+            slab('green', off - 1.95, off - 1.8, 0, 3.6, 0.36, 0.5, 0);
+            slab('green', off + 1.8, off + 1.95, 0, 3.6, 0.36, 0.5, 0);
+            if (gateN < 4) {
+              gateN++;
+              flatBoard(plaque(String(gateN + 2), 0.9, 0.9, 80), 0.9, 0.9, mx + tx * (off + 2.7 - len / 2) + ox * 0.45, gy + 3.1, mz + tz * (off + 2.7 - len / 2) + oz * 0.45, ox, oz);
+            }
+          } else {
+            slab('dark', off - 0.65, off + 0.65, 1.3, 2.9, 0.38, 0.45, 0);
+          }
+        }
+        // upper storeys: cream panels between green steel, a steel beam, a railing and flags
+        slab('cream', 0, len, 5.0, Math.min(9.4, top), 0.04, 0.3);
+        if (top > 9.6) {
+          slab('green', 0, len, 9.4, 10.3, 0.04, 0.7);
+          slab('cream', 0, len, 10.3, Math.min(12.6, top), 0.04, 0.3);
+          if (top > 12.8) slab('green', 0, len, 12.6, 12.9, 0.04, 0.55);
+        }
+        for (let off = (-acc % 9 + 9) % 9 + 0.4; off < len; off += 9) slab('green', off - 0.3, off + 0.3, 0, Math.min(top, 13.2), 0.04, 0.75, 0); // columns
+        // iron railing along the roof edge
+        {
+          const yR = Math.min(rim[jj], rim[jj + 1]) - gy;
+          slab('green', 0, len, yR + 0.95, yR + 1.05, -0.3, -0.2);
+          slab('green', 0, len, yR + 0.45, yR + 0.5, -0.3, -0.2);
+          for (let off = 0; off <= len; off += 1.4) slab('green', off - 0.02, off + 0.02, yR, yR + 1.0, -0.3, -0.2, 0);
+          for (let off = (-acc % 11 + 11) % 11 + 1; off < len; off += 11) {
+            const x = mx + tx * (off - len / 2) - ox * 0.25, z = mz + tz * (off - len / 2) - oz * 0.25;
+            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 5, 6), new THREE.MeshToonMaterial({ color: 0xcfd3d8, gradientMap: gradient }));
+            pole.position.set(x, gy + yR + 2.5, z);
+            group.add(pole);
+            const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.95), new THREE.MeshBasicMaterial({ map: flagTex, side: THREE.DoubleSide }));
+            flag.position.set(x + tx * 0.78, gy + yR + 4.45, z + tz * 0.78);
+            flag.rotation.y = Math.atan2(tx, tz) + Math.PI / 2;
+            group.add(flag);
+          }
+        }
+        // terracotta planters with ornamental grass along the kerb side
+        for (let off = (-acc % 6 + 6) % 6 + 1.5; off < len - 0.7; off += 6) {
+          const px = mx + tx * (off - len / 2) + ox * 1.9, pz = mz + tz * (off - len / 2) + oz * 1.9;
+          const py = terrainAt(px, pz);
+          const g = new THREE.BoxGeometry(1.5, 0.85, 0.8);
+          g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(px, py + 0.42, pz), q, one));
+          lists.pot.push(g);
+          for (let k = 0; k < 9; k++) {
+            const lean = (k - 4) * 0.05;
+            const blade = new THREE.ConeGeometry(0.035, 0.9 + (k % 3) * 0.2, 4).translate(0, 0.55, 0);
+            blade.applyMatrix4(new THREE.Matrix4().compose(
+              new THREE.Vector3(px + tx * (k - 4) * 0.13, py + 0.82, pz + tz * (k - 4) * 0.13),
+              q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(lean * 2, 0, lean * 3))), one));
+            grass.push(blade);
+          }
+          // collision: the rotated footprint's bounds
+          const hx = (Math.abs(tx) * 1.5 + Math.abs(ox) * 0.8) / 2, hz = (Math.abs(tz) * 1.5 + Math.abs(oz) * 0.8) / 2;
+          ctx.addBox({ minX: px - hx, maxX: px + hx, minZ: pz - hz, maxZ: pz + hz, top: py + 0.85 });
+          planterN++;
+        }
+        acc += len;
+      }
+      void planterN;
+      const mats: Record<string, THREE.Material> = {
+        green: toon(GREEN, undefined, { emissive: 0x0a1f14 }), cream: toon(0xf3ecd6, undefined, { emissive: 0x4a4434 }), terra: toon(TERRA, undefined, { emissive: 0x2a0f06 }), dark: toon(DARK), iron: toon(0x24282f), pot: toon(0xc0704a, undefined, { emissive: 0x2a1408 }),
+      };
+      for (const k of Object.keys(lists)) if (lists[k].length) add(new THREE.Mesh(mergeGeometries(lists[k], false)!, mats[k]));
+      if (grass.length) {
+        const gm = new THREE.Mesh(mergeGeometries(grass, false)!, new THREE.MeshBasicMaterial({ color: 0xc9a468 })); // unlit: thin blades read black under toon shading
+        gm.castShadow = false;
+        group.add(gm);
+      }
+
+      // the marquee: a red scalloped sign on green steel, with the lettering, a black message board and a red base strip
+      const o = this.at(mi, 'out');
       const n = Math.hypot(o[0] - C[0], o[1] - C[1]);
       const ux = (o[0] - C[0]) / n, uz = (o[1] - C[1]) / n;
-      const tex = canvas(1024, 400, (c) => {
+      const W = 11, H = 6.2;
+      const tex = canvas(1100, 620, (c) => {
         c.fillStyle = '#c8321f';
-        c.fillRect(0, 0, 1024, 400);
+        c.fillRect(0, 0, 1100, 620);
         c.strokeStyle = '#f7f1e0';
-        c.lineWidth = 10;
-        c.strokeRect(14, 14, 996, 372);
+        c.lineWidth = 8;
+        c.strokeRect(14, 14, 1072, 592);
         c.fillStyle = '#f7f1e0';
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        c.font = '900 168px Impact, Haettenschweiler, "Arial Black", sans-serif';
-        c.fillText('WRIGLEY', 512, 130);
-        c.fillText('FIELD', 512, 285);
-        c.font = '700 40px Impact, "Arial Black", sans-serif';
-        c.fillText('HOME OF CHICAGO CUBS', 512, 360);
+        c.font = '900 150px Impact, Haettenschweiler, "Arial Black", sans-serif';
+        c.fillText('WRIGLEY FIELD', 550, 130);
+        c.font = '700 48px Impact, "Arial Black", sans-serif';
+        c.fillText('HOME OF', 550, 232);
+        c.font = '900 120px Impact, Haettenschweiler, "Arial Black", sans-serif';
+        c.fillText('CHICAGO CUBS', 550, 310);
+        c.fillStyle = '#0d0d12';
+        c.fillRect(70, 380, 960, 110);
+        c.fillStyle = '#f3e9c9';
+        c.font = '700 64px Georgia, "Times New Roman", serif';
+        c.fillText('GO CUBS GO', 550, 436);
+        c.fillStyle = '#f7f1e0';
+        c.font = '700 40px Arial, sans-serif';
+        c.fillText('SINCE 1914', 550, 560);
       });
-      const face = toon(0xffffff, tex, { emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.85 });
-      const body = toon(0xc8321f);
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(11, 4.4, 1.2), [body, body, body, body, face, body]);
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.repeat.set(1 / W, 1 / H);
+      tex.offset.set(0.5, 0);
+      const shape = new THREE.Shape();
+      const hw = W / 2;
+      shape.moveTo(-hw, 0);
+      shape.lineTo(hw, 0);
+      shape.lineTo(hw, H - 1.1);
+      shape.quadraticCurveTo(hw, H - 0.5, hw - 0.9, H - 0.45); // scalloped shoulder
+      shape.quadraticCurveTo(hw - 1.6, H - 0.4, hw - 2.2, H);
+      shape.lineTo(-hw + 2.2, H);
+      shape.quadraticCurveTo(-hw + 1.6, H - 0.4, -hw + 0.9, H - 0.45);
+      shape.quadraticCurveTo(-hw, H - 0.5, -hw, H - 1.1);
+      shape.lineTo(-hw, 0);
+      const face = toon(0xffffff, tex, { emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.8 });
+      const sign = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 0.8, bevelEnabled: false }), [face, toon(0xa82818)]);
       const y = terrainAt(o[0], o[1]);
-      sign.position.set(o[0] + ux * 0.7, y + 6.4, o[1] + uz * 0.7);
-      sign.rotation.y = Math.atan2(ux, uz);
+      const yaw = Math.atan2(ux, uz);
+      sign.position.set(o[0] + ux * 0.9, y + 5.2, o[1] + uz * 0.9);
+      sign.rotation.y = yaw;
       add(sign);
-      // posts and a stone arch frame at street level
-      for (const s of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.7, 6.4, 0.9), toon(0xd8ccb0));
-        post.position.set(o[0] + ux * 0.6 - uz * 4.2 * s, y + 3.2, o[1] + uz * 0.6 + ux * 4.2 * s);
-        post.rotation.y = Math.atan2(ux, uz);
+      // green steel pylons and diagonal braces back to the wall
+      const steel = toon(GREEN);
+      for (const sx of [-1, 1]) {
+        const px = o[0] + ux * 1.25 - uz * 4.6 * sx, pz = o[1] + uz * 1.25 + ux * 4.6 * sx;
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 5.4, 0.6), steel);
+        post.position.set(px, y + 2.7, pz);
+        post.rotation.y = yaw;
         add(post);
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 2.6), steel);
+        brace.position.set(o[0] + ux * 0.55 - uz * 4.6 * sx, y + 8.2, o[1] + uz * 0.55 + ux * 4.6 * sx);
+        brace.rotation.set(0.35, yaw, 0, 'YXZ');
+        add(brace);
       }
+      // gate signs: "GATES 1 & 2" board beside the marquee
+      const bx = o[0] + uz * 9.5, bz = o[1] - ux * 9.5;
+      flatBoard(plaque('GATES 1 & 2\nADDISON & SHEFFIELD', 4.2, 0.9, 44), 4.2, 0.9, bx, terrainAt(bx, bz) + 8.4, bz, ux, uz);
     }
 
     // drainpipes up the outside of the bleachers, where the wall is low enough to hop over

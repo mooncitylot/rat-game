@@ -48,6 +48,67 @@ export async function loadCity(name: string): Promise<CityData> {
   return res.json();
 }
 
+/**
+ * Sidewalk concrete: big poured slabs. One tile covers 4 m x 4 m of ribbon (u along the walk, v across), so the
+ * joints at u = 0 and 0.5 give 2 m long slabs the full width of the walk. Each slab gets its own tone, a little
+ * speckle and the odd hairline crack.
+ */
+function slabTexture(): THREE.Texture {
+  const size = 1024;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  let seed = 90210;
+  const r = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const tones = [[206, 200, 188], [214, 208, 196], [198, 193, 182], [210, 205, 193]];
+  for (let i = 0; i < 2; i++) {
+    const t = tones[Math.floor(r() * tones.length)];
+    ctx.fillStyle = `rgb(${t[0]},${t[1]},${t[2]})`;
+    ctx.fillRect((i * size) / 2, 0, size / 2, size);
+    // broad soft mottling plus fine speckle
+    for (let k = 0; k < 14; k++) {
+      ctx.fillStyle = `rgba(${r() < 0.5 ? '255,250,240' : '90,86,78'},${0.03 + r() * 0.05})`;
+      ctx.beginPath();
+      ctx.ellipse((i * size) / 2 + r() * (size / 2), r() * size, 40 + r() * 110, 30 + r() * 90, r() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let k = 0; k < 2200; k++) {
+      ctx.fillStyle = `rgba(${r() < 0.5 ? '60,56,50' : '255,252,244'},${0.05 + r() * 0.12})`;
+      ctx.fillRect((i * size) / 2 + r() * (size / 2), r() * size, 1 + r() * 2, 1 + r() * 2);
+    }
+    if (r() < 0.7) {
+      // a hairline crack wandering across the slab
+      ctx.strokeStyle = 'rgba(70,66,60,0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let x = (i * size) / 2 + r() * (size / 2), y = r() * size * 0.3;
+      ctx.moveTo(x, y);
+      for (let k = 0; k < 7; k++) {
+        x += (r() - 0.5) * 60;
+        y += 40 + r() * 70;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+  // expansion joints (a dark groove with a pale lip) at both slab edges, and the edge of the walk at v = 0
+  for (let i = 0; i < 2; i++) {
+    const x = (i * size) / 2;
+    ctx.fillStyle = 'rgba(52,48,42,0.8)';
+    ctx.fillRect(x - 3, 0, 6, size);
+    ctx.fillStyle = 'rgba(255,252,244,0.35)';
+    ctx.fillRect(x + 3, 0, 3, size);
+  }
+  ctx.fillStyle = 'rgba(52,48,42,0.5)';
+  ctx.fillRect(0, 0, size, 4);
+  ctx.fillRect(0, size - 4, size, 4);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
 function rng(seed: number) {
   return () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -165,15 +226,20 @@ function ribbon(pts: P2[], width: number, terrain: Terrain, lift: number, tile: 
     const L1 = [s[i + 1].l[0], y(s[i + 1].l), s[i + 1].l[1]], R1 = [s[i + 1].r[0], y(s[i + 1].r), s[i + 1].r[1]];
     const u0 = dist / tile, u1 = (dist + seg) / tile, v1 = width / tile;
     mb.quad(L0, R0, R1, L1, [[u0, 0], [u0, v1], [u1, v1], [u1, 0]], up);
-    if (rise > 0) {
-      const bot = (q: P2) => terrain.at(q[0], q[1]) + lift - 0.02;
+    {
+      // vertical sides, wound outward and dropped well below the ground so slopes never open a gap
+      const flat = [[0.3, 0.3], [0.32, 0.3], [0.32, 0.32], [0.3, 0.32]]; // sample one patch of texture, not the whole tile squashed
+      const bot = (q: P2) => terrain.at(q[0], q[1]) + lift - 0.3;
       const lb0 = [L0[0], bot(s[i].l), L0[2]], lb1 = [L1[0], bot(s[i + 1].l), L1[2]];
       const rb0 = [R0[0], bot(s[i].r), R0[2]], rb1 = [R1[0], bot(s[i + 1].r), R1[2]];
-      const nl = [-(p[i + 1][1] - p[i][1]), 0, p[i + 1][0] - p[i][0]];
-      const nn = Math.hypot(nl[0], nl[2]) || 1;
-      const left = [nl[0] / nn, 0, nl[2] / nn], right = [-left[0], 0, -left[2]];
-      mb.quad(L0, L1, lb1, lb0, [[0, 0], [1, 0], [1, 1], [0, 1]], left);
-      mb.quad(R0, R1, rb1, rb0, [[0, 0], [1, 0], [1, 1], [0, 1]], right);
+      const ox = L0[0] - R0[0], oz = L0[2] - R0[2], on = Math.hypot(ox, oz) || 1;
+      const left = [ox / on, 0, oz / on], right = [-left[0], 0, -left[2]];
+      mb.quad(L0, L1, lb1, lb0, flat, left);
+      mb.quad(R0, R1, rb1, rb0, flat, right);
+      // end caps
+      const tx = L1[0] - L0[0], tz = L1[2] - L0[2], tn = Math.hypot(tx, tz) || 1;
+      if (i === 0) mb.quad(L0, R0, rb0, lb0, flat, [-tx / tn, 0, -tz / tn]);
+      if (i + 2 === p.length) mb.quad(L1, R1, rb1, lb1, flat, [tx / tn, 0, tz / tn]);
     }
     dist += seg;
   }
@@ -371,11 +437,12 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
 
   // ---- materials ----
   const asphalt = loadStyled('/textures/asphalt_02_diff_1k.jpg', { levels: 9, contrast: 0.25, sat: 0, blur: 4, recolor: 0x7e7e9a, gain: 1.25 });
-  const pavement = loadStyled('/textures/concrete_tiles_02_diff_1k.jpg', { size: 1024, levels: 7, contrast: 1.4, sat: 0.5, blur: 0.5, recolor: 0xd9d2c6, gain: 1.3 });
+  const pavement = slabTexture(); // big poured-concrete slabs
   const grassMat = toon(0xffffff, grass);
   breakTiling(grassMat);
   const roadMat = toon(0xffffff, asphalt);
   const walkMat = toon(0xffffff, pavement);
+  walkMat.side = THREE.DoubleSide; // belt and braces: no see-through edges
   for (const m of [roadMat, walkMat]) {
     m.polygonOffset = true;
     m.polygonOffsetFactor = -1;
@@ -386,7 +453,6 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const segs = new SegIndex();
   const roadGeos: THREE.BufferGeometry[] = [];
   const walkGeos: THREE.BufferGeometry[] = [];
-  const dashes: THREE.Matrix4[] = [];
   const catRoutes: THREE.Vector2[][] = [];
   const footways: { pts: P2[]; crossing: boolean }[] = [];
   const slabs: { pts: P2[]; half: number }[] = [];
@@ -397,6 +463,8 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const lakeTrails: { pts: P2[]; half: number; kind: string }[] = [];
   const trailShoulders: THREE.BufferGeometry[] = [];
   const trailDashes: THREE.Matrix4[] = [];
+  const pendingWalks: (typeof data.roads)[number][] = [];
+  const paintRoads: { pts: P2[]; half: number; oneway: boolean; lined: boolean }[] = [];
 
   for (const r of data.roads) {
     if (r.tu) continue;
@@ -404,21 +472,9 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     if (DRIVABLE.has(r.k)) {
       roadGeos.push(ribbon(r.p, r.w, terrain, 0.06, 8));
       for (let i = 0; i + 1 < r.p.length; i++) segs.add({ ax: r.p[i][0], az: r.p[i][1], bx: r.p[i + 1][0], bz: r.p[i + 1][1], half: r.w / 2, alley });
+      paintRoads.push({ pts: r.p, half: r.w / 2, oneway: !!r.o, lined: !alley && r.k !== 'service' && r.w >= 11 });
       if (alley) alleyLines.push({ pts: r.p, half: r.w / 2 });
       else streetLines.push({ pts: r.p, half: r.w / 2, name: r.n });
-      // dashed centre line on two-way streets
-      if (!alley && r.w >= 11 && !r.o && r.k !== 'service') {
-        const rs = resample(r.p, 1);
-        let acc = 0;
-        for (let i = 1; i < rs.length; i++) {
-          const dx = rs[i][0] - rs[i - 1][0], dz = rs[i][1] - rs[i - 1][1];
-          acc += 1;
-          if (acc % 8 < 3) {
-            const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -Math.atan2(dz, dx)));
-            dashes.push(new THREE.Matrix4().compose(new THREE.Vector3(rs[i][0], terrain.at(rs[i][0], rs[i][1]) + 0.1, rs[i][1]), q, new THREE.Vector3(1, 1, 1)));
-          }
-        }
-      }
     } else if (WALKABLE.has(r.k)) {
       if (r.f === 'crossing') {
         footways.push({ pts: r.p, crossing: true });
@@ -434,28 +490,119 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
           }
         }
       } else {
-        footways.push({ pts: r.p, crossing: false });
-        walkGeos.push(ribbon(r.p, Math.max(r.w, 3.0), terrain, 0.0, 4, 0.16));
-        if (r.n === 'Lakefront Trail' && !r.br) {
-          lakeTrails.push({ pts: r.p, half: Math.max(r.w, 3.0) / 2, kind: r.k });
-          // crushed-granite shoulders, and a yellow dashed centre line down the single-lane stretches
-          trailShoulders.push(ribbon(r.p, Math.max(r.w, 3.0) + 1.6, terrain, 0.05, 3));
-          if (r.k === 'cycleway' && r.w < 12) {
-            const rs = resample(r.p, 1);
-            for (let i = 1; i < rs.length; i++) {
-              if (i % 7 > 2) continue;
-              const dx = rs[i][0] - rs[i - 1][0], dz = rs[i][1] - rs[i - 1][1];
-              const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -Math.atan2(dz, dx)));
-              trailDashes.push(new THREE.Matrix4().compose(new THREE.Vector3(rs[i][0], terrain.at(rs[i][0], rs[i][1]) + 0.2, rs[i][1]), q, new THREE.Vector3(1, 1, 1)));
-            }
-          }
-        }
-        slabs.push({ pts: r.p, half: Math.max(r.w, 3.0) / 2 });
+        pendingWalks.push(r); // built once every street is indexed, so the ends can reach the kerb
       }
     }
   }
+  // sidewalks: run each end on to the kerb of a street directly ahead (the mapped lines stop short, leaving a grass gap)
+  for (const r of pendingWalks) {
+    const pts = r.p.map((q) => [q[0], q[1]] as P2);
+    const reach = (end: P2, from: P2): void => {
+      const dx = end[0] - from[0], dz = end[1] - from[1], l = Math.hypot(dx, dz);
+      if (l < 0.01) return;
+      const ux = dx / l, uz = dz / l;
+      let prev = segs.nearest(end[0], end[1], false);
+      if (prev && prev.d <= 0.1) return; // already at the road
+      for (let t = 0.25; t <= 9; t += 0.25) {
+        const k = segs.nearest(end[0] + ux * t, end[1] + uz * t, false);
+        if (k && k.d <= 0.1 && (!prev || k.d < prev.d)) {
+          end[0] += ux * (t + 0.15);
+          end[1] += uz * (t + 0.15);
+          return;
+        }
+        prev = k;
+      }
+    };
+    if (pts.length >= 2) {
+      reach(pts[pts.length - 1], pts[pts.length - 2]);
+      reach(pts[0], pts[1]);
+    }
+    const width = Math.max(r.w, 3.0);
+    footways.push({ pts, crossing: false });
+    walkGeos.push(ribbon(pts, width, terrain, 0.0, 4, 0.16));
+    if (r.n === 'Lakefront Trail' && !r.br) {
+      lakeTrails.push({ pts, half: width / 2, kind: r.k });
+      // crushed-granite shoulders, and a yellow dashed centre line down the single-lane stretches
+      trailShoulders.push(ribbon(pts, width + 1.6, terrain, 0.05, 3));
+      if (r.k === 'cycleway' && r.w < 12) {
+        const rs = resample(pts, 1);
+        for (let i = 1; i < rs.length; i++) {
+          if (i % 7 > 2) continue;
+          const dx = rs[i][0] - rs[i - 1][0], dz = rs[i][1] - rs[i - 1][1];
+          const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -Math.atan2(dz, dx)));
+          trailDashes.push(new THREE.Matrix4().compose(new THREE.Vector3(rs[i][0], terrain.at(rs[i][0], rs[i][1]) + 0.2, rs[i][1]), q, new THREE.Vector3(1, 1, 1)));
+        }
+      }
+    }
+    slabs.push({ pts, half: width / 2 });
+  }
   if (roadGeos.length) group.add(shadowed(new THREE.Mesh(mergeGeometries(roadGeos, false)!, roadMat)));
   if (walkGeos.length) group.add(shadowed(new THREE.Mesh(mergeGeometries(walkGeos, false)!, walkMat)));
+  // ---- road paint: double yellow down two-way streets, white lines marking the parking lane at each kerb ----
+  {
+    const CELL = 24;
+    const cells = new Map<number, { ri: number; ax: number; az: number; bx: number; bz: number; half: number }[]>();
+    const key = (x: number, z: number) => Math.floor(x / CELL) * 100003 + Math.floor(z / CELL);
+    paintRoads.forEach((r, ri) => {
+      for (let i = 0; i + 1 < r.pts.length; i++) {
+        const [ax, az] = r.pts[i], [bx, bz] = r.pts[i + 1];
+        const pad = r.half + 3;
+        for (let ix = Math.floor((Math.min(ax, bx) - pad) / CELL); ix <= Math.floor((Math.max(ax, bx) + pad) / CELL); ix++) {
+          for (let iz = Math.floor((Math.min(az, bz) - pad) / CELL); iz <= Math.floor((Math.max(az, bz) + pad) / CELL); iz++) {
+            const k = ix * 100003 + iz;
+            let l = cells.get(k);
+            if (!l) cells.set(k, (l = []));
+            l.push({ ri, ax, az, bx, bz, half: r.half });
+          }
+        }
+      }
+    });
+    // inside another street's surface (plus a stop-line margin)? then this is an intersection: leave it unpainted
+    const inJunction = (x: number, z: number, self: number): boolean => {
+      for (const c of cells.get(key(x, z)) ?? []) {
+        if (c.ri === self) continue;
+        const dx = c.bx - c.ax, dz = c.bz - c.az, l2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((x - c.ax) * dx + (z - c.az) * dz) / l2));
+        if (Math.hypot(x - c.ax - dx * t, z - c.az - dz * t) < c.half + 1.6) return true;
+      }
+      return false;
+    };
+    const yellow = new MeshBuilder(), white = new MeshBuilder();
+    const up = [0, 1, 0];
+    const stripe = (mb: MeshBuilder, ri: number, off: number, width: number) => {
+      const rs = resample(paintRoads[ri].pts, 0.75);
+      const nrm = rs.map((_q, i) => {
+        const a = rs[Math.max(0, i - 1)], b = rs[Math.min(rs.length - 1, i + 1)];
+        const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l];
+      });
+      const edge = (i: number, side: number): number[] => {
+        const o = off + side * (width / 2);
+        const x = rs[i][0] + nrm[i][0] * o, z = rs[i][1] + nrm[i][1] * o;
+        return [x, terrain.at(x, z) + 0.1, z];
+      };
+      for (let i = 0; i + 1 < rs.length; i++) {
+        if (inJunction(rs[i][0], rs[i][1], ri) || inJunction(rs[i + 1][0], rs[i + 1][1], ri)) continue;
+        mb.quad(edge(i, -1), edge(i, 1), edge(i + 1, 1), edge(i + 1, -1), [[0, 0], [0, 1], [1, 1], [1, 0]], up);
+      }
+    };
+    paintRoads.forEach((r, ri) => {
+      if (!r.lined) return;
+      if (!r.oneway) for (const o of [-0.12, 0.12]) stripe(yellow, ri, o, 0.12);
+      const edgeOff = r.half - 2.0; // the parking lane is about 2 m wide
+      if (edgeOff > 2) for (const o of [-edgeOff, edgeOff]) stripe(white, ri, o, 0.2);
+    });
+    for (const [mb, color] of [[yellow, 0xe8c24a], [white, 0xeeeae0]] as const) {
+      if (!mb.pos.length) continue;
+      const m = toon(color);
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = -2;
+      m.polygonOffsetUnits = -2;
+      const mesh = new THREE.Mesh(mb.build(), m);
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+  }
   {
     const mk = (geo: THREE.BufferGeometry, color: number, xf: THREE.Matrix4[]) => {
       if (!xf.length) return;
@@ -468,7 +615,6 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       im.receiveShadow = true;
       group.add(im);
     };
-    mk(new THREE.PlaneGeometry(2.4, 0.2), 0xe6d9a8, dashes);
     mk(new THREE.PlaneGeometry(0.55, 3.2), 0xf2eee0, zebras);
     mk(new THREE.PlaneGeometry(1.6, 0.16), 0xe8c84a, trailDashes);
     if (trailShoulders.length) {
@@ -507,7 +653,39 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     }
   });
   const usedShops = new Set<number>();
+  // front yards: how far a street face can push out (past the stoop) before it meets the sidewalk or the grass strip by the kerb
+  const slabBox = slabs.map((sl) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of sl.pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
+    return { x0: x0 - sl.half - 1, x1: x1 + sl.half + 1, z0: z0 - sl.half - 1, z1: z1 + sl.half + 1 };
+  });
+  const onSidewalk = (x: number, z: number, near: number[]): boolean => {
+    for (const si of near) {
+      const { pts, half } = slabs[si];
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const ax = pts[k][0], az = pts[k][1], dx = pts[k + 1][0] - ax, dz = pts[k + 1][1] - az;
+        const l2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+        if (Math.hypot(x - ax - dx * t, z - az - dz * t) < half) return true;
+      }
+    }
+    return false;
+  };
+  const yardDepth = (mx: number, mz: number, nx: number, nz: number): number => {
+    const near: number[] = [];
+    const rx0 = Math.min(mx, mx + nx * 16), rx1 = Math.max(mx, mx + nx * 16), rz0 = Math.min(mz, mz + nz * 16), rz1 = Math.max(mz, mz + nz * 16);
+    slabBox.forEach((b, si) => { if (rx1 > b.x0 && rx0 < b.x1 && rz1 > b.z0 && rz0 < b.z1) near.push(si); });
+    let limit = 16;
+    for (let t = 0.3; t < 16; t += 0.25) {
+      const x = mx + nx * t, z = mz + nz * t;
+      const road = segs.nearest(x, z, false);
+      if (road && road.d < 0.25) { limit = t - 2.8; break; } // leave room for a grass strip
+      if (onSidewalk(x, z, near)) { limit = t; break; }
+    }
+    return limit >= 3.4 ? Math.min(limit - 0.3, 7) : 0; // too tight for a stoop and a yard: no fence
+  };
   const buildingFootprints: P2[][] = [];
+  const stoopSolids: { pts: [number, number][]; top: number }[] = [];
 
   data.buildings.forEach((b, bi) => {
     const pts = rings[bi];
@@ -515,7 +693,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     const n = pts.length;
     let baseY = Infinity;
     for (const p of pts) baseY = Math.min(baseY, terrain.at(p[0], p[1]));
-    const street: boolean[] = [], alley: boolean[] = [], party: boolean[] = [], shopName: (string | null)[] = [];
+    const street: boolean[] = [], alley: boolean[] = [], party: boolean[] = [], shopName: (string | null)[] = [], yard: number[] = [];
     let shopHere = false;
     for (let i = 0; i < n; i++) {
       const a = pts[i], c = pts[(i + 1) % n];
@@ -527,6 +705,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       const isStreet = !isAlley && !!s && s.d < 16 && s.dx * nx + s.dz * nz > 0.3;
       alley.push(isAlley);
       street.push(isStreet);
+      yard.push(isStreet && L >= 6 ? yardDepth(mx + nx * 0.3, mz + nz * 0.3, nx, nz) : 0);
       // shared wall with a neighbour?
       let shared = false;
       for (let ox = -1; ox <= 1 && !shared; ox++) {
@@ -578,11 +757,14 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       alley,
       party,
       shopName,
+      yard,
+      groundAt: (x, z) => terrain.at(x, z),
       seed: bi * 7919 + 13,
     });
     polys.push(makePoly(pts, r.roofY));
     buildingFootprints.push(pts);
     pipes.push(...r.pipes);
+    for (const sh of r.solids) stoopSolids.push(sh);
     for (const pp of r.pipes) {
       const pipe = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, r.roofY - baseY, 8), toon(0x5a5f6a)), true);
       pipe.position.set(pp.x, (r.roofY + baseY) / 2, pp.z);
@@ -601,6 +783,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   // ---- the collider ----
   const collider = new CityCollider((x, z) => stadium.y(x, z) ?? terrain.at(x, z), polys, { x0: B.x0 + 8, x1: B.x1 - 8, z0: B.z0 + 8, z1: B.z1 - 8 });
   collider.setWalkways(slabs, 0.16);
+  for (const sh of stoopSolids) collider.addPoly(makePoly(sh.pts, sh.top)); // stoops, steps and yard fences
   for (const w of waterPolys) collider.addPoly(makePoly(windCCW(w.pts), lake.y + 2.2)); // too tall to climb: the rat can't swim
   const bulbMat = new THREE.MeshBasicMaterial({ color: 0xfff1b0 });
   const wrig = stadium.build({ group, gradient, bulbMat, terrainAt: (x, z) => terrain.at(x, z), addPoly: (p) => collider.addPoly(p), addBox: (b) => collider.addBox(b) });
@@ -688,7 +871,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       },
     });
   };
-  const treeSpots: { x: number; z: number; s: number; c: number }[] = [];
+  const treeSpots: { x: number; z: number; s: number; c: number; conifer?: boolean }[] = [];
   const forests: P2[][] = [];
   for (const st of streetLines) {
     if (!st.name) continue;
@@ -717,6 +900,99 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   }
   const powerLines = buildPowerLines({ streets: streetLines, terrainAt: (x, z) => terrain.at(x, z), blocked: inBuilding, addBox: (b) => collider.addBox(b), gradient, nearEdge, rand });
   group.add(powerLines.group);
+  // ---- open ground: every lawn, yard and courtyard that isn't a building, street or sidewalk gets plant life ----
+  type Plant = { x: number; z: number; s: number; c: number };
+  const wild = { tufts: [] as Plant[], tall: [] as Plant[], flowers: [] as Plant[], bushes: [] as Plant[] };
+  {
+    const CELL2 = 2;
+    const gw = Math.ceil((B.x1 - B.x0) / CELL2) + 1, gh = Math.ceil((B.z1 - B.z0) / CELL2) + 1;
+    const cellAt = (x: number, z: number) => Math.floor((z - B.z0) / CELL2) * gw + Math.floor((x - B.x0) / CELL2);
+    // raster of building footprints, then grown by 1 cell (yards/steps stay clear) and by 3 cells (room for trees and shrubs)
+    const bld = new Uint8Array(gw * gh);
+    for (const pl of polys) {
+      for (let cz = Math.max(0, Math.floor((pl.minZ - B.z0) / CELL2)); cz <= Math.min(gh - 1, Math.floor((pl.maxZ - B.z0) / CELL2)); cz++) {
+        for (let cx = Math.max(0, Math.floor((pl.minX - B.x0) / CELL2)); cx <= Math.min(gw - 1, Math.floor((pl.maxX - B.x0) / CELL2)); cx++) {
+          if (inPoly(pl.pts, B.x0 + (cx + 0.5) * CELL2, B.z0 + (cz + 0.5) * CELL2)) bld[cz * gw + cx] = 1;
+        }
+      }
+    }
+    const grow = (src: Uint8Array, r: number): Uint8Array => {
+      const tmp = new Uint8Array(src.length), out = new Uint8Array(src.length);
+      for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) if (src[z * gw + x]) for (let k = Math.max(0, x - r); k <= Math.min(gw - 1, x + r); k++) tmp[z * gw + k] = 1;
+      for (let z = 0; z < gh; z++) for (let x = 0; x < gw; x++) if (tmp[z * gw + x]) for (let k = Math.max(0, z - r); k <= Math.min(gh - 1, z + r); k++) out[k * gw + x] = 1;
+      return out;
+    };
+    const near1 = grow(bld, 1), near3 = grow(bld, 3);
+    // smooth value noise, to clump meadows, shrubs and groves instead of sprinkling evenly
+    const hash = (a: number, b: number): number => {
+      let n = Math.imul(a, 374761393) + Math.imul(b, 668265263);
+      n = Math.imul(n ^ (n >>> 13), 1274126177);
+      return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+    };
+    const vnoise = (x: number, z: number, seed: number): number => {
+      const x0 = Math.floor(x), z0 = Math.floor(z), fx = x - x0, fz = z - z0;
+      const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+      const a = hash(x0 + seed, z0), b = hash(x0 + 1 + seed, z0), c = hash(x0 + seed, z0 + 1), d = hash(x0 + 1 + seed, z0 + 1);
+      return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+    };
+    const fbm = (x: number, z: number, seed: number, scale: number) => vnoise(x / scale, z / scale, seed) * 0.65 + vnoise((x * 2.1) / scale, (z * 2.1) / scale, seed + 91) * 0.35;
+
+    // pass 1: every open spot on a jittered grid
+    const S = 1.5;
+    const ox: number[] = [], oz: number[] = [], free3: boolean[] = [];
+    for (let gx = B.x0 + 14; gx < B.x1 - 14; gx += S) {
+      for (let gz = B.z0 + 14; gz < B.z1 - 14; gz += S) {
+        const x = gx + rand() * S, z = gz + rand() * S;
+        const ci = cellAt(x, z);
+        if (near1[ci]) continue;
+        const road = segs.nearest(x, z, false);
+        if (road && road.d < 0.7) continue;
+        const al = segs.nearest(x, z, true);
+        if (al && al.d < 0.7) continue;
+        if (collider.slab(x, z) > 0 || inBuilding(x, z)) continue;
+        // keep the ballpark's frontage clear: nothing within ~24 m of the stadium footprint
+        if (x > -150 && x < 115 && z > -105 && z < 165 && [9, 24].some((d) => stadium.inside(x + d, z) || stadium.inside(x - d, z) || stadium.inside(x, z + d) || stadium.inside(x, z - d))) continue;
+        ox.push(x);
+        oz.push(z);
+        free3.push(!near3[ci] && (!road || road.d > 3.2) && (!al || al.d > 3));
+      }
+    }
+    const open = ox.length;
+    const TUFT_BUDGET = 170000;
+    const pTuft = Math.min(0.7, TUFT_BUDGET / Math.max(1, open));
+    const tallTints = [0xa9b45a, 0x93ad4e, 0xb8b868, 0x7fa646];
+    const bloomCols = [0xf4e04d, 0xffffff, 0xf08cb4, 0xb48cf0, 0xff9a3c, 0xe8604c];
+    const GRASS = [0x6fa045, 0x7fb04c, 0x8cbc55, 0x5e9340, 0x9ac45e];
+    const BUSH = [0x3f7a35, 0x4f8a3c, 0x5c8f3a, 0x6a9a3a, 0x2f6a3a, 0x7d8f3a];
+    let bushN = 0, treeN = 0;
+    for (let i = 0; i < open; i++) {
+      const x = ox[i], z = oz[i];
+      const meadow = fbm(x, z, 11, 38); // 0..1: where the long grass and wildflowers grow
+      const shrub = fbm(x, z, 23, 30); // shrub beds
+      const grove = fbm(x, z, 37, 55); // tree groves
+      if (rand() < pTuft) wild.tufts.push({ x, z, s: 0.8 + rand() * 0.6, c: GRASS[Math.floor(rand() * GRASS.length)] });
+      if (meadow > 0.55) {
+        const k = Math.min(1, (meadow - 0.55) / 0.2);
+        if (rand() < 0.55 * k) wild.tall.push({ x, z, s: 0.8 + rand() * 0.7, c: tallTints[Math.floor(rand() * tallTints.length)] });
+        if (rand() < 0.12 * k && wild.flowers.length < 26000) {
+          const col = bloomCols[Math.floor(rand() * bloomCols.length)];
+          for (let n = 0; n < 4; n++) wild.flowers.push({ x: x + (rand() - 0.5) * 1.3, z: z + (rand() - 0.5) * 1.3, s: 0.7 + rand() * 0.5, c: col });
+        }
+      }
+      if (free3[i]) {
+        if (shrub > 0.62 && rand() < 0.045 && bushN < 3500) {
+          bushN++;
+          wild.bushes.push({ x, z, s: 0.7 + rand() * 1.0, c: BUSH[Math.floor(rand() * BUSH.length)] });
+        }
+        const gk = grove > 0.6 ? 0.03 + (grove - 0.6) * 0.25 : 0.0012; // groves, with the odd lone tree elsewhere
+        if (rand() < gk && treeN < 9000) {
+          treeN++;
+          const conifer = rand() < (grove > 0.6 ? 0.4 : 0.15);
+          treeSpots.push({ x, z, s: conifer ? 0.9 + rand() * 0.9 : 0.7 + rand() * 0.9, c: conifer ? [0x2f6a3f, 0x3a7a4a, 0x285a38][Math.floor(rand() * 3)] : LEAVES[Math.floor(rand() * LEAVES.length)], conifer });
+        }
+      }
+    }
+  }
   for (const p of data.parks) {
     if (!/^(park|garden|grass|village_green|recreation_ground|dog_park|wood|forest|scrub)$/.test(p.k) || p.p.length < 3) continue;
     const pts = p.p;
@@ -743,25 +1019,95 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       }
     }
   }
+  // no trees on streets, alleys or sidewalks, wherever they came from
+  {
+    const ok = (t: { x: number; z: number }): boolean => {
+      const road = segs.nearest(t.x, t.z, false);
+      if (road && road.d < 1.0) return false;
+      const alley = segs.nearest(t.x, t.z, true);
+      if (alley && alley.d < 1.0) return false;
+      return collider.slab(t.x, t.z) === 0;
+    };
+    // ...and no two trees on the same spot: overlapping crowns z-fight, which shows up as scribbles
+    const taken = new Set<number>();
+    const kept: typeof treeSpots = [];
+    for (const t of treeSpots) {
+      if (!ok(t)) continue;
+      const cx = Math.floor(t.x / 2), cz = Math.floor(t.z / 2);
+      let clash = false;
+      for (let dx = -1; dx <= 1 && !clash; dx++) for (let dz = -1; dz <= 1 && !clash; dz++) clash = taken.has((cx + dx) * 100003 + (cz + dz));
+      if (clash) continue;
+      taken.add(cx * 100003 + cz);
+      kept.push(t);
+    }
+    treeSpots.length = 0;
+    for (const t of kept) treeSpots.push(t);
+  }
   if (treeSpots.length) {
-    const crownGeo = new THREE.IcosahedronGeometry(1.7, 1);
-    const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 2.6, 6);
-    const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient }), treeSpots.length);
-    const trunks = new THREE.InstancedMesh(trunkGeo, toon(0x5a4030), treeSpots.length);
+    // a few silhouettes: crown geometry carries its own height, so every kind sits on the same trunk
+    const blob = (r: number, sx: number, sy: number, sz: number, x: number, y: number, z: number, detail = 1) =>
+      new THREE.IcosahedronGeometry(r, detail).scale(sx, sy, sz).translate(x, y, z).toNonIndexed();
+    const stack = (levels: [number, number, number][]) => mergeGeometries(levels.map(([r, h, y]) => new THREE.ConeGeometry(r, h, 8).translate(0, y, 0).toNonIndexed()), false)!;
+    const broadleaf = [
+      { w: 0.3, geo: blob(1.7, 1, 1, 1, 0, 4.0, 0) }, // round
+      { w: 0.2, geo: blob(1.4, 0.85, 1.4, 0.85, 0, 4.3, 0) }, // tall oval
+      { w: 0.2, geo: blob(1.9, 1.3, 0.7, 1.3, 0, 3.6, 0) }, // broad and low
+      { w: 0.1, geo: blob(1.1, 0.7, 2.1, 0.7, 0, 4.9, 0) }, // columnar, poplar-like
+      { w: 0.2, geo: mergeGeometries([blob(1.15, 1, 1, 1, 0, 4.2, 0), blob(0.95, 1, 1, 1, 0.95, 3.7, 0.4), blob(0.9, 1, 1, 1, -0.85, 3.8, -0.5), blob(0.8, 1, 1, 1, 0.2, 5.0, -0.3)], false)! }, // lobed, oak-like
+    ];
+    const conifers = [
+      { w: 0.55, geo: stack([[1.5, 2.3, 2.4], [1.15, 2.1, 3.7], [0.78, 1.9, 4.8]]) }, // fir
+      { w: 0.45, geo: stack([[1.0, 2.0, 2.2], [0.85, 1.9, 3.4], [0.65, 1.8, 4.6], [0.42, 1.7, 5.7]]) }, // tall slim spruce
+    ];
+    const pick = (list: { w: number }[]): number => {
+      let r = rand();
+      for (let i = 0; i < list.length; i++) if ((r -= list[i].w) < 0) return i;
+      return list.length - 1;
+    };
+    const kinds = [...broadleaf.map((k) => k.geo), ...conifers.map((k) => k.geo)];
+    // depth without a texture: darker underneath, lighter on top, and each facet a touch different
+    for (const g of kinds) {
+      const pos = g.getAttribute('position');
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < pos.count; i++) { lo = Math.min(lo, pos.getY(i)); hi = Math.max(hi, pos.getY(i)); }
+      const col = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i += 3) {
+        const jit = (rand() - 0.5) * 0.16;
+        for (let k = 0; k < 3; k++) {
+          const v = THREE.MathUtils.clamp(0.7 + 0.4 * ((pos.getY(i + k) - lo) / (hi - lo || 1)) + jit, 0.4, 1.15);
+          col.set([v, v, v], (i + k) * 3);
+        }
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    }
+    const kindOf = treeSpots.map((t) => (t.conifer ? broadleaf.length + pick(conifers) : pick(broadleaf)));
+    const counts = kinds.map(() => 0);
+    kindOf.forEach((k) => counts[k]++);
+    const crownMat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient, vertexColors: true });
+    const meshes = kinds.map((g, k) => {
+      const im = new THREE.InstancedMesh(g, crownMat, Math.max(1, counts[k]));
+      im.count = counts[k];
+      im.castShadow = im.receiveShadow = true;
+      return im;
+    });
+    // the trunk runs up inside the crown (4.2 high), so the crowns' random stretch can never open a gap
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.3, 4.2, 6), toon(0x5a4030), treeSpots.length);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), color = new THREE.Color();
+    const used = kinds.map(() => 0);
     treeSpots.forEach((t, i) => {
       const y = terrain.at(t.x, t.z);
       q.setFromEuler(new THREE.Euler(0, rand() * 6, 0));
-      m.compose(new THREE.Vector3(t.x, y + 1.3 * t.s, t.z), q, new THREE.Vector3(t.s, t.s, t.s));
+      m.compose(new THREE.Vector3(t.x, y + 2.1 * t.s, t.z), q, new THREE.Vector3(t.s, t.s, t.s));
       trunks.setMatrixAt(i, m);
-      m.compose(new THREE.Vector3(t.x, y + 4.0 * t.s, t.z), q, new THREE.Vector3(t.s * 1.05, t.s * (0.9 + rand() * 0.3), t.s * 1.05));
-      crowns.setMatrixAt(i, m);
-      crowns.setColorAt(i, color.setHex(t.c));
+      const k = kindOf[i];
+      const squash = 0.9 + rand() * 0.3, fat = 0.9 + rand() * 0.25; // no two alike
+      m.compose(new THREE.Vector3(t.x, y, t.z), q, new THREE.Vector3(t.s * fat, t.s * squash, t.s * fat));
+      meshes[k].setMatrixAt(used[k], m);
+      meshes[k].setColorAt(used[k]++, color.setHex(t.c));
       collider.addBox({ minX: t.x - 0.3, maxX: t.x + 0.3, minZ: t.z - 0.3, maxZ: t.z + 0.3, top: y + 2.6 * t.s });
     });
-    crowns.castShadow = trunks.castShadow = true;
-    crowns.receiveShadow = true;
-    group.add(crowns, trunks);
+    trunks.castShadow = true;
+    group.add(trunks, ...meshes.filter((im) => im.count > 0));
   }
 
   // ---- ground cover: grass tufts, flowers and bushes in the green spaces ----
@@ -818,6 +1164,10 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
         }
       }
     }
+    // added after the park loops, so their caps don't starve the parks (loops: spreading 100k+ items overflows the stack)
+    for (const t of wild.tufts) tufts.push(t);
+    for (const t of wild.flowers) flowers.push(t);
+    for (const t of wild.bushes) bushes.push(t);
     // a clump: crossed, tapered blades, bending more toward the tip
     const clump = (blades: number, h: number, w: number): THREE.BufferGeometry => {
       const pos: number[] = [], nor: number[] = [], idx: number[] = [];
@@ -872,6 +1222,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     const grassBlade = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient, side: THREE.DoubleSide, emissive: 0x2e4a1a });
     sway(grassBlade, 0.12);
     place(tufts, clump(6, 0.2, 0.06), grassBlade, 0, true);
+    place(wild.tall, clump(5, 0.62, 0.05), grassBlade, 0, false); // meadow: long grass in patches
 
     // flowers: a thin stem with a bright head
     const stem = clump(1, 0.32, 0.02);

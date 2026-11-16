@@ -45,7 +45,7 @@ export class Sfx {
     city.connect(lp).connect(this.cityGain).connect(this.master);
     city.start();
 
-    // wind while flying: high-passed noise that swells with the rocket
+    // wind while flying: high-passed noise that swells with the tail rotor
     const wind = ctx.createBufferSource();
     wind.buffer = buf;
     wind.loop = true;

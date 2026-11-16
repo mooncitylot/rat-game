@@ -103,10 +103,19 @@ export interface PolySpec {
   alley: boolean[];
   party: boolean[]; // shares a wall with a neighbour: blank brick
   shopName: (string | null)[];
+  /** per edge: metres from the wall to the iron fence round a front yard (0 = no yard). Residential street faces only. */
+  yard?: number[];
+  groundAt?: (x: number, z: number) => number; // terrain height, so yard fences and paths sit on the real ground
   seed: number;
+}
+/** A solid footprint (positive winding, outward normal of edge a->b is (dz, -dx)) the rat can bump into or stand on. */
+export interface SolidShape {
+  pts: [number, number][];
+  top: number; // absolute height
 }
 export interface PolyResult {
   roofY: number;
+  solids: SolidShape[]; // stoop steps and walls, yard fences
   pipes: { x: number; z: number; nx: number; nz: number; top: number }[];
 }
 
@@ -116,6 +125,8 @@ const WIN_W = 1.5;
 const WIN_H = 2.0;
 const PITCH_X = 3.0;
 const PITCH_Y = 3.5;
+const FENCE_H = 1.65; // front-yard iron fence: nearly pedestrian height
+const PATH_TOP = 0.15; // yard path, just under the sidewalk slab (0.16)
 
 /** Builds detailed building facades. Instanced windows/sills, merged stone trim. */
 export class FacadeKit {
@@ -132,6 +143,9 @@ export class FacadeKit {
   private doorMats: THREE.MeshToonMaterial[];
   private awningMats: THREE.MeshToonMaterial[];
   private metalMat: THREE.MeshToonMaterial;
+  private ironMat: THREE.MeshToonMaterial;
+  private pathMat: THREE.MeshToonMaterial;
+  private jointMat: THREE.MeshToonMaterial;
   private batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
   private brickMats = new Map<string, THREE.MeshToonMaterial>();
 
@@ -158,6 +172,9 @@ export class FacadeKit {
     this.stoneMat = this.toon(0xd6c9b2);
     this.stepMat = this.toon(0xffffff, loadStyled(base + 'concrete_wall_004_diff_1k.jpg', { size: 512, levels: 7, contrast: 1.2, recolor: 0xd4c8b0, gain: 1.55 }));
     this.metalMat = this.toon(0x5e6470);
+    this.ironMat = this.toon(0x101114); // wrought-iron black
+    this.pathMat = this.toon(0xe6e0d2); // plain concrete, matches the sidewalk slabs
+    this.jointMat = this.toon(0x6f6a60);
     this.frameMat = this.toon(0x1d2236);
     for (let i = 0; i < 6; i++) this.murals.push(new THREE.MeshToonMaterial({ map: makeMural(i + 1), gradientMap: gradient }));
     this.doorMats = [0x2b2230, 0x1f3a4a, 0x4a2a2a, 0x2a3a2a].map((c) => this.toon(c));
@@ -181,6 +198,27 @@ export class FacadeKit {
     let list = this.batches.get(mat);
     if (!list) this.batches.set(mat, (list = []));
     list.push(g);
+  }
+
+  /** A run of black iron fence along local x in [x0, x1]: posts with finials, rails, a picket every 0.2 m. About head height on a person. */
+  private fence(at: (x: number, y: number, z: number) => THREE.Matrix4, x0: number, x1: number): void {
+    const len = x1 - x0;
+    if (len < 0.25) return;
+    const H = FENCE_H, mat = this.ironMat;
+    const mid = (x0 + x1) / 2;
+    for (const y of [H - 0.12, H * 0.5, 0.28]) this.trim(mat, len, 0.05, 0.05, at(mid, y, 0)); // top, middle and bottom rails
+    const posts = Math.max(1, Math.round(len / 2.4));
+    for (let k = 0; k <= posts; k++) {
+      const x = x0 + (len * k) / posts;
+      this.trim(mat, 0.1, H + 0.1, 0.1, at(x, (H + 0.1) / 2, 0));
+      this.trim(mat, 0.15, 0.08, 0.15, at(x, H + 0.14, 0)); // cap
+    }
+    const bars = Math.max(1, Math.floor(len / 0.2));
+    for (let k = 0; k < bars; k++) {
+      const x = x0 + (len * (k + 0.5)) / bars;
+      this.trim(mat, 0.025, H - 0.05, 0.025, at(x, (H - 0.05) / 2, 0));
+      this.trim(mat, 0.05, 0.08, 0.05, at(x, H + 0.02, 0)); // spear tip
+    }
   }
 
   addBuilding(s: BuildingSpec): Box[] {
@@ -374,8 +412,14 @@ export class FacadeKit {
     const n = pts.length;
     const T = (x: number, y: number, z: number) => new THREE.Matrix4().makeTranslation(x, y, z);
     const one = new THREE.Vector3(1, 1, 1);
-    const result: PolyResult = { roofY: 0, pipes: [] };
+    const result: PolyResult = { roofY: 0, pipes: [], solids: [] };
 
+    /** footprint from four corners, wound the way the collider wants */
+    const solid = (corners: [number, number][], top: number): void => {
+      let a2 = 0;
+      for (let k = 0; k < 4; k++) a2 += corners[k][0] * corners[(k + 1) % 4][1] - corners[(k + 1) % 4][0] * corners[k][1];
+      result.solids.push({ pts: a2 < 0 ? [...corners].reverse() : corners, top });
+    };
     const STOREY = 4.0;
     const plinthH = s.ground === 'shop' ? 3.8 : 1.5;
     const firstFloor = s.ground === 'shop' ? 1 : 0; // shop buildings: floor 0 is the shopfront storey
@@ -534,6 +578,61 @@ export class FacadeKit {
               const t = (k + 0.5) / 4;
               this.trim(this.metalMat, 0.03, 0.85, 0.03, Lm(cx, y0 + (y1 - y0) * t - 0.5, z0 + (z1 - z0) * t));
             }
+          }
+          // collision for the stoop: a landing, a staircase the rat can scramble up (7 even risers, each within its
+          // step-up reach, close to the drawn treads), and the cheek walls
+          {
+            const box = (lx: number, lz: number, w: number, d: number, h: number): void => {
+              const c = ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([sx, sz]) => {
+                const v = new THREE.Vector3(lx + (sx * w) / 2, 0, lz + (sz * d) / 2).applyMatrix4(m);
+                return [v.x, v.z] as [number, number];
+              });
+              solid(c, s.baseY + h);
+            };
+            box(0, push + LAND / 2, SW + 0.2, LAND, plinthH);
+            const footZ = push + LAND + TREAD * 3, stepD = (TREAD * 3) / 6;
+            for (let j = 0; j < 6; j++) box(0, footZ - (j + 0.5) * stepD, SW, stepD, (plinthH * (j + 1)) / 7);
+            for (const sx of [-1, 1]) {
+              const cx = sx * (SW / 2 + 0.12);
+              box(cx, push + LAND / 2, 0.24, LAND, plinthH + 0.5);
+              for (let k = 0; k < 3; k++) box(cx, push + LAND + TREAD * (k + 0.5), 0.24, TREAD + 0.05, plinthH - RISER * (k + 1) + 0.5);
+            }
+          }
+          // front yard: an iron fence along the edge with a gate at the stoop, and a path from gate to steps
+          const yd = s.yard?.[i] ?? 0;
+          if (yd > 0) {
+            const gx = dOff, GATE = 1.7;
+            const gnd = (x: number, z: number) => (s.groundAt ? s.groundAt(x, z) : s.baseY);
+            const cx0 = a[0] + dxn * (L / 2) + nx * yd, cz0 = a[1] + dzn * (L / 2) + nz * yd;
+            const fy = gnd(cx0, cz0) - 0.05; // fence stands on the ground at its midpoint
+            const at = (x: number, y: number, z: number) => new THREE.Matrix4().compose(
+              new THREE.Vector3(a[0] + dxn * (L / 2 + x) + nx * yd, fy + y, a[1] + dzn * (L / 2 + x) + nz * yd), q, one).multiply(T(0, 0, z));
+            this.fence(at, -L / 2, Math.min(L / 2, gx - GATE / 2));
+            this.fence(at, Math.max(-L / 2, gx + GATE / 2), L / 2);
+            // fence collision: a thin wall for each run, with the gate left open (top is the spear tips)
+            const wall = (x0: number, x1: number): void => {
+              if (x1 - x0 < 0.25) return;
+              const P = (x: number, o: number): [number, number] => [a[0] + dxn * (L / 2 + x) + nx * (yd + o), a[1] + dzn * (L / 2 + x) + nz * (yd + o)];
+              solid([P(x0, -0.07), P(x1, -0.07), P(x1, 0.07), P(x0, 0.07)], fy + FENCE_H + 0.1);
+            };
+            wall(-L / 2, Math.min(L / 2, gx - GATE / 2));
+            wall(Math.max(-L / 2, gx + GATE / 2), L / 2);
+            for (const sx of [-1, 1]) {
+              this.trim(this.ironMat, 0.14, FENCE_H + 0.2, 0.14, at(gx + sx * GATE / 2, (FENCE_H + 0.2) / 2, 0)); // gate posts
+              this.trim(this.ironMat, 0.2, 0.1, 0.2, at(gx + sx * GATE / 2, FENCE_H + 0.25, 0));
+            }
+            // concrete path from the foot of the steps out through the gate to the sidewalk, with a joint every ~1.6 m.
+            // Heights are local to the stoop frame (origin at baseY); the slab is deep so slopes never bury or float it.
+            const foot = push + LAND + TREAD * 3 - 0.1, end = yd + 0.9;
+            const plen = end - foot;
+            const px = base.x + nx * (foot + plen / 2), pz = base.z + nz * (foot + plen / 2);
+            const top = gnd(px, pz) - s.baseY + PATH_TOP;
+            const bot = Math.min(0, top - PATH_TOP) - 0.4;
+            const PW = 2.2; // wider than the gate, so the path flares out at the steps
+            this.trim(this.pathMat, PW, top - bot, plen, Lm(0, (top + bot) / 2, (foot + end) / 2));
+            for (const sx of [-1, 1]) this.trim(this.jointMat, 0.1, 0.02, plen, Lm(sx * (PW / 2 - 0.05), top + 0.004, (foot + end) / 2)); // dark edging
+            const nj = Math.max(1, Math.round(plen / 1.6));
+            for (let k = 1; k < nj; k++) this.trim(this.jointMat, PW, 0.01, 0.06, Lm(0, top + 0.006, foot + (plen * k) / nj));
           }
         }
       }

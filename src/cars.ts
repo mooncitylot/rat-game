@@ -209,7 +209,7 @@ export class Car {
     const L = this.fleet.lanes[this.lane];
     const { x, z, tx, tz } = this.fleet.sample(L, this.s);
     // keep right of the centre line, in the direction of travel
-    this.off = L.oneway ? 0 : Math.min(L.w * 0.25, 3);
+    this.off = L.oneway ? 0 : (L.w / 2 - 2.0 + 0.25) / 2; // middle of the travel lane: between the double yellow and the parking-lane line
     const rx = -tz * this.dir, rz = tx * this.dir; // right-hand side of travel
     this.pos.set(x + rx * this.off, this.fleet.terrainAt(x + rx * this.off, z + rz * this.off) + 0.06, z + rz * this.off);
     this.yaw = Math.atan2(tx * this.dir, tz * this.dir);

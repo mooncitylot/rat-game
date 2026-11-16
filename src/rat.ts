@@ -6,10 +6,13 @@ export const RAT_RADIUS = 0.12;
 const STEP = 0.25; // max ledge the rat scrambles up without jumping (a curb is 0.22)
 const GRAVITY = 26;
 const JUMP = 8.2;
-export const MAX_FUEL = 100; // seconds of thrust
+export const MAX_FUEL = 3; // seconds of rotor lift
+const HUB_Y = 0.63; // tail rotor hub height above the back
+const HUB_Z = -0.03;
+const FLY_SPEED_MULT = 1.7; // top-speed boost while the rotor spins
 const THRUST = 52; // upward accel while flying (gravity is 26)
 const MAX_RISE = 6.5;
-const REFUEL = 25; // fuel/sec regained on the ground
+const REFUEL = 0.75; // fuel/sec regained on the ground (4s for a full tank, as before)
 
 export interface Pipe {
   x: number;
@@ -53,11 +56,10 @@ export class Rat {
   private legs: THREE.Mesh[] = [];
   private tail: THREE.Object3D[] = [];
   private t = 0;
-  private flame: THREE.Mesh;
-  private glow: THREE.PointLight;
-  private smoke: { m: THREE.Mesh; age: number; vy: number }[] = [];
-  private smokeGeo = new THREE.SphereGeometry(1, 6, 5);
-  private smokeT = 0;
+  private mast: THREE.Mesh; // post lifting the tail into rotor position
+  private blur: THREE.Mesh; // faint disc: the spinning tail's motion blur
+  private spin = 0; // rotor spool-up, 0..1
+  private rotor = 0; // rotor angle
   private tiara = new THREE.Group();
 
   /** America's Next Top Rat */
@@ -140,24 +142,19 @@ export class Rat {
       this.legs.push(paw);
     }
 
-    // rocket pack
-    const metal = toon(0x555a66);
-    for (const sx of [-0.09, 0.09]) {
-      const can = add(new THREE.CylinderGeometry(0.06, 0.07, 0.3, 8), metal);
-      can.position.set(sx, 0.6, -0.12);
-      can.rotation.x = Math.PI / 2;
-    }
-    this.flame = new THREE.Mesh(
-      new THREE.ConeGeometry(0.09, 0.45, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffb030 }),
+    // helicopter tail: a mast on the back lifts the tail into a spinning rotor
+    this.mast = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.36, 6), pink);
+    this.mast.position.set(0, 0.45, -0.03);
+    this.mast.visible = false;
+    this.body.add(this.mast);
+    this.blur = new THREE.Mesh(
+      new THREE.CircleGeometry(1.2, 28),
+      new THREE.MeshBasicMaterial({ color: 0xe79aa6, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
     );
-    this.flame.rotation.x = -Math.PI / 2; // tip points back (-z)
-    this.flame.position.set(0, 0.6, -0.5);
-    this.glow = new THREE.PointLight(0xffa040, 0, 7, 1.6);
-    this.glow.position.set(0, 0.6, -0.6);
-    this.body.add(this.glow);
-    this.flame.visible = false;
-    this.body.add(this.flame);
+    this.blur.rotation.x = -Math.PI / 2;
+    this.blur.position.set(0, HUB_Y, HUB_Z);
+    this.blur.visible = false;
+    this.body.add(this.blur);
 
     // tail: chain of segments that whip as we move
     let parent: THREE.Object3D = this.body;
@@ -239,7 +236,7 @@ export class Rat {
       wx /= len;
       wz /= len;
     }
-    const top = input.sprint ? 7.5 : 4.4;
+    const top = (input.sprint ? 7.5 : 4.4) * (this.flying ? FLY_SPEED_MULT : 1); // flying flag is last frame's
     const want = Math.min(1, len) * top;
     this.speed += (want - this.speed) * Math.min(1, dt * 14); // snappy accel, rat-like
     if (len > 0.05) {
@@ -277,7 +274,7 @@ export class Rat {
       this.grounded = false;
       this.jumped = true;
     }
-    // rocket pack: hold space in the air
+    // tail-rotor flight: hold space in the air
     this.flying = input.jump && !this.grounded && this.fuel > 0;
     if (this.flying) {
       this.fuel = Math.max(0, this.fuel - dt);
@@ -344,48 +341,12 @@ export class Rat {
     }
   }
 
-  private updateSmoke(dt: number): void {
-    const scene = this.group.parent;
-    if (!scene) return;
-    this.glow.intensity = this.flying ? 3 + Math.random() * 1.5 : 0;
-    this.smokeT -= dt;
-    if (this.flying && this.mode === 'walk' && this.smokeT <= 0) {
-      this.smokeT = 0.03;
-      this.group.updateMatrixWorld(true);
-      const p = new THREE.Vector3(0, 0.6, -0.65);
-      this.body.localToWorld(p);
-      let e = this.smoke.find((x) => !x.m.visible);
-      if (!e) {
-        const m = new THREE.Mesh(this.smokeGeo, new THREE.MeshBasicMaterial({ color: 0xb8b8c0, transparent: true, depthWrite: false }));
-        scene.add(m);
-        e = { m, age: 0, vy: 0 };
-        this.smoke.push(e);
-      }
-      e.m.visible = true;
-      e.m.position.copy(p).add(new THREE.Vector3((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.06));
-      e.age = 0;
-      e.vy = -0.3 - Math.random() * 0.3;
-    }
-    for (const e of this.smoke) {
-      if (!e.m.visible) continue;
-      e.age += dt;
-      const k = e.age / 1.1;
-      if (k >= 1) { e.m.visible = false; continue; }
-      e.m.position.y += (e.vy + k * 0.9) * dt; // sinks briefly, then drifts up
-      e.m.scale.setScalar(0.05 + k * 0.22);
-      (e.m.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - k);
-    }
-  }
-
   private animate(dt: number): void {
-    this.updateSmoke(dt);
     const climbing = this.mode === 'climb';
     this.t += dt * (2 + this.speed * 1.6);
     const run = Math.min(1, this.speed / 5);
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
-    this.flame.visible = this.flying && !climbing;
-    this.flame.scale.set(1, 0.7 + Math.random() * 0.6, 1);
     this.group.visible = this.hurt <= 0 || Math.floor(this.hurt * 14) % 2 === 0; // blink while invulnerable
 
     if (climbing) {
@@ -399,6 +360,10 @@ export class Rat {
         leg.position.z = (i < 2 ? 0.3 : -0.3) + Math.sin(ph) * 0.14;
         leg.position.y = 0.07;
       });
+      this.spin = 0;
+      this.mast.visible = false;
+      this.blur.visible = false;
+      this.tail[0].position.set(0, 0.24, -0.55);
       this.tail.forEach((seg, i) => {
         seg.rotation.y = Math.sin(this.t * 1.5 - i * 0.7) * 0.15;
         seg.rotation.x = -0.05;
@@ -416,9 +381,25 @@ export class Rat {
       leg.position.z = (i < 2 ? 0.3 : -0.3) + Math.sin(ph) * 0.12 * run;
       leg.position.y = 0.07 + Math.max(0, Math.cos(ph)) * 0.07 * run;
     });
+    // helicopter tail: spool the rotor up while flying, down otherwise
+    this.spin = THREE.MathUtils.clamp(this.spin + (this.flying ? 6 : -4) * dt, 0, 1);
+    this.rotor = (this.rotor + this.spin * 32 * dt) % (Math.PI * 2);
+    const k = this.spin;
+    this.mast.visible = k > 0;
+    this.mast.scale.y = k;
+    this.mast.position.y = 0.27 + 0.18 * k;
+    this.blur.visible = k > 0.3;
+    (this.blur.material as THREE.MeshBasicMaterial).opacity = 0.22 * k * k;
     this.tail.forEach((seg, i) => {
-      seg.rotation.y = Math.sin(this.t * 2 - i * 0.7) * (0.12 + run * 0.25);
-      seg.rotation.x = i === 0 ? -0.35 : -0.04 - air * 0.08;
+      const walkY = Math.sin(this.t * 2 - i * 0.7) * (0.12 + run * 0.25);
+      const walkX = i === 0 ? -0.35 : -0.04 - air * 0.08;
+      if (i === 0) {
+        seg.position.set(0, THREE.MathUtils.lerp(0.24, HUB_Y, k), THREE.MathUtils.lerp(-0.55, HUB_Z, k));
+        seg.rotation.y = k > 0 ? this.rotor : walkY;
+      } else {
+        seg.rotation.y = THREE.MathUtils.lerp(walkY, 0.08, k); // slight sweep, trailing the spin
+      }
+      seg.rotation.x = THREE.MathUtils.lerp(walkX, 0, k);
     });
   }
 }
