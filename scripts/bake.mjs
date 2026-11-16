@@ -1,16 +1,19 @@
 // Bakes a real place into public/city/<name>.json from OpenStreetMap (Overpass) + Mapzen/AWS terrarium elevation tiles.
-//   node scripts/bake.mjs wrigleyville 41.9484 -87.6553 600 [eastMetres]
+//   node scripts/bake.mjs wrigleyville 41.9484 -87.6553 600 [eastMetres] [northMetres]
+// northMetres (real metres from the centre) stretches the north edge out (Devon Ave is ~5620 m north of Wrigley).
+// Big areas are queried in horizontal bands and merged. OVERPASS=<url> overrides the endpoint list.
 // size = side of the square around the centre; eastMetres (real metres) stretches the east edge out to the lake.
 // Raw responses are cached in data/ so re-bakes don't hit the APIs again.
 import fs from 'node:fs';
 import { PNG } from 'pngjs';
 
-const [name = 'wrigleyville', LAT0 = '41.9484', LON0 = '-87.6553', SIZE = '600', EAST = ''] = process.argv.slice(2);
+const [name = 'wrigleyville', LAT0 = '41.9484', LON0 = '-87.6553', SIZE = '600', EAST = '', NORTH = ''] = process.argv.slice(2);
 const lat0 = Number(LAT0), lon0 = Number(LON0), size = Number(SIZE);
 const SCALE = 1.25; // world is built 1.25x real size so streets match our 2.6 m doors
 const M_LAT = 110574, M_LON = 111320 * Math.cos((lat0 * Math.PI) / 180);
 const half = size / 2;
-const south = lat0 - half / M_LAT, north = lat0 + half / M_LAT;
+const northM = NORTH ? Number(NORTH) : half; // real metres from the centre to the north edge
+const south = lat0 - half / M_LAT, north = lat0 + northM / M_LAT;
 const eastM = EAST ? Number(EAST) : half; // real metres from the centre to the east edge
 const west = lon0 - half / M_LON, east = lon0 + eastM / M_LON;
 const UA = { 'User-Agent': 'rat-game-poc (open-source hobby project)' };
@@ -20,14 +23,34 @@ const fromXZ = (x, z) => [lat0 - z / SCALE / M_LAT, lon0 + x / SCALE / M_LON];
 const r2 = (v) => Math.round(v * 100) / 100;
 
 // ------------------------------------------------------------------ OpenStreetMap
-const rawPath = EAST ? `data/${name}.e${EAST}.overpass.json` : `data/${name}.overpass.json`;
+const ENDPOINTS = process.env.OVERPASS ? [process.env.OVERPASS] : ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+async function overpass(q, label) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const url = ENDPOINTS[attempt % ENDPOINTS.length];
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { ...UA, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) });
+      if (res.ok) { const t = await res.text(); console.log(label, url, 'bytes', t.length); return t; }
+      console.log(`overpass ${res.status} from ${url}`);
+    } catch (e) { console.log(`overpass ${url} failed: ${e.cause?.code ?? e.message}`); }
+    const wait = 8000 * 2 ** Math.floor(attempt / ENDPOINTS.length);
+    console.log(`retry in ${wait / 1000}s (attempt ${attempt + 1}/6)`);
+    await new Promise((r) => setTimeout(r, wait));
+  }
+  throw new Error('overpass stayed unavailable');
+}
+const rawPath = `data/${name}${EAST ? '.e' + EAST : ''}${NORTH ? '.n' + NORTH : ''}.overpass.json`;
 let osm;
 if (fs.existsSync(rawPath)) {
   osm = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
   console.log('using cached', rawPath);
 } else {
-  const bb = `${south},${west},${north},${east}`;
-  const q = `[out:json][timeout:120];
+  const BAND = 900; // real metres of latitude per request
+  const nBands = Math.max(1, Math.ceil(((north - south) * M_LAT) / BAND));
+  const seen = new Set(), elements = [];
+  for (let k = 0; k < nBands; k++) {
+    const bs = south + (k * (north - south)) / nBands, bn = south + ((k + 1) * (north - south)) / nBands;
+    const bb = `${bs},${west},${bn},${east}`;
+    const q = `[out:json][timeout:180];
 (
   way["highway"](${bb});
   way["building"](${bb});
@@ -45,16 +68,13 @@ if (fs.existsSync(rawPath)) {
   node["shop"](${bb});
 );
 out geom;`;
-  console.log('querying Overpass...');
-  let text = '';
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', headers: { ...UA, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) });
-    if (res.ok) { text = await res.text(); break; }
-    const wait = 8000 * 2 ** attempt; // exponential backoff, as the server asks
-    console.log(`overpass ${res.status}; retry in ${wait / 1000}s (attempt ${attempt + 1}/6)`);
-    await new Promise((r) => setTimeout(r, wait));
+    const part = await overpass(q, `band ${k + 1}/${nBands}`);
+    for (const e of JSON.parse(part).elements) {
+      const id = e.type + e.id;
+      if (!seen.has(id)) { seen.add(id); elements.push(e); } // ways crossing a band edge come back twice
+    }
   }
-  if (!text) throw new Error('overpass stayed unavailable');
+  const text = JSON.stringify({ elements });
   fs.writeFileSync(rawPath, text);
   osm = JSON.parse(text);
   console.log('overpass bytes', text.length);
@@ -105,7 +125,7 @@ const elevAt = async (lat, lon) => {
 
 // the area we keep: the bbox plus a margin so nothing is cut off at the edge
 const ext = (half + 40) * SCALE;
-const X0 = -ext, X1 = (eastM + 40) * SCALE, Z0 = -ext, Z1 = ext; // world-space bounds of the baked area
+const X0 = -ext, X1 = (eastM + 40) * SCALE, Z0 = -(northM + 40) * SCALE, Z1 = ext; // world-space bounds of the baked area
 const STEP = 6; // metres between height samples (in world units)
 const NX = Math.ceil((X1 - X0) / STEP) + 1, NZ = Math.ceil((Z1 - Z0) / STEP) + 1;
 console.log('sampling heights', NX, 'x', NZ);
@@ -182,15 +202,13 @@ for (const e of osm.elements) {
 
 // Lake Michigan and the harbours are multipolygon relations (their member ways carry no tags), so ask for them
 // separately. `out geom(bbox)` clips the outlines to the box: nulls mark nodes outside it.
-const lakePath = `data/${name}.lake.json`;
+const lakePath = `data/${name}${NORTH ? '.n' + NORTH : ''}.lake.json`;
 let rels;
 if (fs.existsSync(lakePath)) rels = JSON.parse(fs.readFileSync(lakePath, 'utf8'));
 else {
   const bb2 = `${south},${west},${north},${east}`;
   const q2 = `[out:json][timeout:90];\nrel["natural"="water"](${bb2});\nout geom(${bb2});`;
-  const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', headers: { ...UA, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q2) });
-  if (!res.ok) throw new Error('overpass relations ' + res.status);
-  const text = await res.text();
+  const text = await overpass(q2, 'lake');
   fs.writeFileSync(lakePath, text);
   rels = JSON.parse(text);
 }
