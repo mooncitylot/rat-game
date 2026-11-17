@@ -45,26 +45,10 @@ export interface CityData {
   shops: { p: P2; name: string; kind: string }[];
 }
 
-/** Fetch the baked city, reporting download progress (0..1) when the server says how big it is. */
-export async function loadCity(name: string, onProgress?: (frac: number) => void): Promise<CityData> {
+export async function loadCity(name: string): Promise<CityData> {
   const res = await fetch(asset(`/city/${name}.json`));
   if (!res.ok) throw new Error(`no baked city ${name}`);
-  const total = Number(res.headers.get('content-length')); // absent or compressed-size on some servers: then no bar, just the shimmer
-  if (!res.body || !onProgress || !total) return res.json();
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    got += value.length;
-    onProgress(Math.min(1, got / total));
-  }
-  const all = new Uint8Array(got);
-  let at = 0;
-  for (const c of chunks) { all.set(c, at); at += c.length; }
-  return JSON.parse(new TextDecoder().decode(all));
+  return res.json();
 }
 
 /**
@@ -1594,8 +1578,6 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
           return { name: forests.length > 1 ? `Forest ${i + 1}` : 'Forest', x: cx, z: cz };
         }),
         ...(lake.shoreX !== null ? [{ name: 'Lake Michigan', x: lake.shoreX - 14, z: 0 }] : []),
-        // Chicago grid: 100 address numbers = 1/8 mile = 201.2 m, and the world is 1.25x real size. Wrigley sits at ~3650 N.
-        ...([['Irving Park Rd', 4000], ['Montrose Ave', 4400], ['Lawrence Ave', 4800], ['Foster Ave', 5200], ['Bryn Mawr Ave', 5600]] as const).map(([name, n]) => ({ name, x: 0, z: -((n - 3650) / 100) * 201.2 * 1.25 })).filter((p) => p.z > B.z0 + 100),
         { name: 'Devon Ave', x: 0, z: B.z0 + 50 },
         { name: 'South end', x: 0, z: ext * 0.8 },
         { name: 'West end', x: -ext * 0.8, z: 0 },
