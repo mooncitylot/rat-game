@@ -146,12 +146,12 @@ export class FacadeKit {
   private ironMat: THREE.MeshToonMaterial;
   private pathMat: THREE.MeshToonMaterial;
   private jointMat: THREE.MeshToonMaterial;
-  private batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  private batches = new Map<THREE.Material, Batch>();
   private brickMats = new Map<string, THREE.MeshToonMaterial>();
 
-  private glassXf: THREE.Matrix4[] = [];
-  private frameXf: THREE.Matrix4[] = [];
-  private sillXf: THREE.Matrix4[] = [];
+  private glassXf = new XfList();
+  private frameXf = new XfList();
+  private sillXf = new XfList();
   private thr: number[] = [];
 
   constructor(gradient: THREE.DataTexture, private rand: () => number) {
@@ -191,13 +191,25 @@ export class FacadeKit {
     return m;
   }
 
+  private plaster(i: number): THREE.MeshToonMaterial {
+    const key = 'plaster' + (i % this.plasters.length);
+    let m = this.brickMats.get(key);
+    if (!m) {
+      m = this.toon(0xffffff, this.plasters[i % this.plasters.length]);
+      this.brickMats.set(key, m);
+    }
+    return m;
+  }
+
+  private batch(mat: THREE.Material): Batch {
+    let b = this.batches.get(mat);
+    if (!b) this.batches.set(mat, (b = new Batch(!!(mat as THREE.MeshToonMaterial).map)));
+    return b;
+  }
+
   /** Queue a box for merging with every other piece that shares its material. */
   private trim(mat: THREE.Material, w: number, h: number, d: number, m: THREE.Matrix4): void {
-    const g = new THREE.BoxGeometry(w, h, d);
-    g.applyMatrix4(m);
-    let list = this.batches.get(mat);
-    if (!list) this.batches.set(mat, (list = []));
-    list.push(g);
+    this.batch(mat).box(w, h, d, m);
   }
 
   /** A run of black iron fence along local x in [x0, x1]: posts with finials, rails, a picket every 0.2 m. About head height on a person. */
@@ -234,7 +246,7 @@ export class FacadeKit {
     wall.position.set(cx, BASE + wallH / 2, cz);
     this.group.add(wall);
 
-    const plinth = texBox(w + 0.2, PLINTH, d + 0.2, 2.4, this.toon(0xffffff, this.plasters[s.plinth % this.plasters.length]), du, dv);
+    const plinth = texBox(w + 0.2, PLINTH, d + 0.2, 2.4, this.plaster(s.plinth), du, dv);
     plinth.position.set(cx, BASE + PLINTH / 2, cz);
     this.group.add(plinth);
     this.trim(this.stoneMat, w + 0.4, 0.26, d + 0.4, T(cx, BASE + PLINTH + 0.13, cz));
@@ -391,14 +403,14 @@ export class FacadeKit {
     // a proud quad is also lengthened by `push`, so the wedge that opens at an outside corner is covered
     const ex = (dx / L) * push, ez = (dz / L) * push;
     const ax = a[0] + nx * push - ex, az = a[1] + nz * push - ez, bx = b[0] + nx * push + ex, bz = b[1] + nz * push + ez;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute([ax, y0, az, bx, y0, bz, bx, y1, bz, ax, y1, az], 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute([nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz], 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute([u0, y0 / tile, u0 + L / tile, y0 / tile, u0 + L / tile, y1 / tile, u0, y1 / tile], 2));
-    g.setIndex([0, 2, 1, 0, 3, 2]);
-    let list = this.batches.get(mat);
-    if (!list) this.batches.set(mat, (list = []));
-    list.push(g);
+    const g = this.batch(mat);
+    const v = g.verts;
+    g.vert(ax, y0, az, nx, 0, nz, u0, y0 / tile);
+    g.vert(bx, y0, bz, nx, 0, nz, u0 + L / tile, y0 / tile);
+    g.vert(bx, y1, bz, nx, 0, nz, u0 + L / tile, y1 / tile);
+    g.vert(ax, y1, az, nx, 0, nz, u0, y1 / tile);
+    g.tri(v, v + 2, v + 1);
+    g.tri(v, v + 3, v + 2);
   }
 
   private roofMat: THREE.MeshToonMaterial | null = null;
@@ -428,7 +440,7 @@ export class FacadeKit {
     result.roofY = roofY;
     void firstFloor;
     const brickMat = this.brick(s.style);
-    const plasterMat = this.toon(0xffffff, this.plasters[s.plinth % this.plasters.length]);
+    const plasterMat = this.plaster(s.plinth);
     const tile = this.brickTile[s.style];
     const wallBottom = s.baseY - 0.6; // dips below the lowest ground so slopes never show a gap
     const stoneBand = (a: [number, number], b: [number, number], y: number, h: number, depth: number, extend: number) => {
@@ -641,34 +653,23 @@ export class FacadeKit {
     // roof: a flat cap
     const contour = pts.map((p) => new THREE.Vector2(p[0], p[1]));
     const tris = THREE.ShapeUtils.triangulateShape(contour, []);
-    const pos: number[] = [], uv: number[] = [];
-    for (const p of pts) {
-      pos.push(p[0], roofY - 0.02, p[1]);
-      uv.push(p[0] / 4, p[1] / 4);
-    }
-    const roof = new THREE.BufferGeometry();
-    roof.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    roof.setAttribute('normal', new THREE.Float32BufferAttribute(pts.flatMap(() => [0, 1, 0]), 3));
-    roof.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    // triangulateShape winds for a y-up (x right, z toward viewer) plane: flip so faces point up
-    roof.setIndex(tris.flatMap((t) => [t[0], t[2], t[1]]));
     if (!this.roofMat) this.roofMat = this.toon(0xffffff, this.roofTex);
-    let list = this.batches.get(this.roofMat);
-    if (!list) this.batches.set(this.roofMat, (list = []));
-    list.push(roof);
+    const roof = this.batch(this.roofMat);
+    const v0 = roof.verts;
+    for (const p of pts) roof.vert(p[0], roofY - 0.02, p[1], 0, 1, 0, p[0] / 4, p[1] / 4);
+    // triangulateShape winds for a y-up (x right, z toward viewer) plane: flip so faces point up
+    for (const t of tris) roof.tri(v0 + t[0], v0 + t[2], v0 + t[1]);
     return result;
   }
 
   /** Bake the merged trim and the instanced window parts. Returns the glass mesh (the lights) and its thresholds. */
   finish(): { mesh: THREE.InstancedMesh; thr: number[] } {
-    for (const [mat, geos] of this.batches) {
-      const merged = mergeGeometries(geos, false);
-      if (!merged) continue;
-      const mesh = new THREE.Mesh(merged, mat);
+    for (const [mat, b] of this.batches) {
+      if (!b.verts) continue;
+      const mesh = new THREE.Mesh(b.geometry(), mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.group.add(mesh);
-      geos.forEach((g) => g.dispose());
     }
     this.batches.clear();
 
@@ -686,9 +687,9 @@ export class FacadeKit {
     const sillGeo = new THREE.BoxGeometry(WIN_W + 0.5, 0.14, 0.4);
     const glassGeo = new THREE.PlaneGeometry(WIN_W - 0.06, WIN_H - 0.06);
 
-    const mk = (geo: THREE.BufferGeometry, mat: THREE.Material, xf: THREE.Matrix4[], shadows: boolean) => {
+    const mk = (geo: THREE.BufferGeometry, mat: THREE.Material, xf: XfList, shadows: boolean) => {
       const im = new THREE.InstancedMesh(geo, mat, xf.length);
-      xf.forEach((m, i) => im.setMatrixAt(i, m));
+      im.instanceMatrix.array.set(xf.data.subarray(0, xf.length * 16));
       im.instanceMatrix.needsUpdate = true;
       im.castShadow = shadows;
       im.receiveShadow = shadows;
@@ -698,7 +699,114 @@ export class FacadeKit {
     mk(frameGeo, this.frameMat, this.frameXf, true);
     mk(sillGeo, this.stoneMat, this.sillXf, true);
     const glass = mk(glassGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), this.glassXf, false);
-    this.glassXf.forEach((_, i) => glass.setColorAt(i, new THREE.Color(0x232a3d)));
+    const dark = new THREE.Color(0x232a3d);
+    for (let i = 0; i < this.glassXf.length; i++) glass.setColorAt(i, dark);
+    this.glassXf = this.frameXf = this.sillXf = new XfList();
     return { mesh: glass, thr: this.thr };
+  }
+}
+
+// one unit box (24 verts, flat-shaded faces), the template every trim piece is stamped from
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const UB_POS = UNIT_BOX.attributes.position.array as Float32Array;
+const UB_NOR = UNIT_BOX.attributes.normal.array as Float32Array;
+const UB_UV = UNIT_BOX.attributes.uv.array as Float32Array;
+const UB_IDX = Array.from(UNIT_BOX.index!.array);
+
+/**
+ * Packed vertex soup for every piece that shares one material. Pieces are written straight into growing typed
+ * arrays: the city has hundreds of thousands of fence pickets, sills and bands, and a BufferGeometry per piece
+ * (kept alive until the merge) ran a phone browser out of memory.
+ */
+class Batch {
+  verts = 0;
+  private pos = new Float32Array(3 * 1024);
+  private nor = new Int8Array(3 * 1024); // normalised: plenty for toon bands, a quarter of float32
+  private uv: Float32Array;
+  private idx = new Uint32Array(1536);
+  private ni = 0;
+
+  /** `uvs`: false when the material has no texture, so the (unused) uv channel isn't stored at all. */
+  constructor(private uvs: boolean) {
+    this.uv = new Float32Array(uvs ? 2 * 1024 : 0);
+  }
+
+  private grow(nv: number, ni: number): void {
+    if ((this.verts + nv) * 3 > this.pos.length) {
+      const cap = Math.max(this.pos.length * 2, (this.verts + nv) * 3);
+      const p = new Float32Array(cap); p.set(this.pos); this.pos = p;
+      const n = new Int8Array(cap); n.set(this.nor); this.nor = n;
+      if (this.uvs) { const u = new Float32Array((cap / 3) * 2); u.set(this.uv); this.uv = u; }
+    }
+    if (this.ni + ni > this.idx.length) {
+      const i = new Uint32Array(Math.max(this.idx.length * 2, this.ni + ni)); i.set(this.idx); this.idx = i;
+    }
+  }
+
+  vert(x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number): void {
+    this.grow(1, 0);
+    const k = this.verts++;
+    this.pos[k * 3] = x; this.pos[k * 3 + 1] = y; this.pos[k * 3 + 2] = z;
+    this.nor[k * 3] = Math.round(nx * 127); this.nor[k * 3 + 1] = Math.round(ny * 127); this.nor[k * 3 + 2] = Math.round(nz * 127);
+    if (this.uvs) { this.uv[k * 2] = u; this.uv[k * 2 + 1] = v; }
+  }
+
+  tri(a: number, b: number, c: number): void {
+    this.grow(0, 3);
+    this.idx[this.ni++] = a; this.idx[this.ni++] = b; this.idx[this.ni++] = c;
+  }
+
+  /** A w x h x d box transformed by m: the same vertices as BoxGeometry(w, h, d).applyMatrix4(m). */
+  box(w: number, h: number, d: number, m: THREE.Matrix4): void {
+    this.grow(24, 36);
+    const e = m.elements;
+    // normal matrix = inverse transpose of the upper 3x3
+    const a00 = e[0], a01 = e[4], a02 = e[8], a10 = e[1], a11 = e[5], a12 = e[9], a20 = e[2], a21 = e[6], a22 = e[10];
+    const c00 = a11 * a22 - a12 * a21, c01 = a12 * a20 - a10 * a22, c02 = a10 * a21 - a11 * a20;
+    const c10 = a02 * a21 - a01 * a22, c11 = a00 * a22 - a02 * a20, c12 = a01 * a20 - a00 * a21;
+    const c20 = a01 * a12 - a02 * a11, c21 = a02 * a10 - a00 * a12, c22 = a00 * a11 - a01 * a10;
+    const v0 = this.verts;
+    for (let i = 0; i < 24; i++) {
+      const x = UB_POS[i * 3] * w, y = UB_POS[i * 3 + 1] * h, z = UB_POS[i * 3 + 2] * d;
+      const k = (v0 + i) * 3;
+      this.pos[k] = e[0] * x + e[4] * y + e[8] * z + e[12];
+      this.pos[k + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+      this.pos[k + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+      const nx = UB_NOR[i * 3], ny = UB_NOR[i * 3 + 1], nz = UB_NOR[i * 3 + 2];
+      // cofactor matrix = det * inverse transpose; the det sign is fixed per piece, normalising takes care of scale
+      let ox = c00 * nx + c01 * ny + c02 * nz, oy = c10 * nx + c11 * ny + c12 * nz, oz = c20 * nx + c21 * ny + c22 * nz;
+      const det = a00 * c00 + a01 * c01 + a02 * c02;
+      const l = (det < 0 ? -127 : 127) / (Math.hypot(ox, oy, oz) || 1);
+      ox *= l; oy *= l; oz *= l;
+      this.nor[k] = Math.round(ox); this.nor[k + 1] = Math.round(oy); this.nor[k + 2] = Math.round(oz);
+      if (this.uvs) {
+        this.uv[(v0 + i) * 2] = UB_UV[i * 2];
+        this.uv[(v0 + i) * 2 + 1] = UB_UV[i * 2 + 1];
+      }
+    }
+    for (let i = 0; i < 36; i++) this.idx[this.ni++] = v0 + UB_IDX[i];
+    this.verts += 24;
+  }
+
+  geometry(): THREE.BufferGeometry {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, this.verts * 3), 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(this.nor.slice(0, this.verts * 3), 3, true));
+    if (this.uvs) g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, this.verts * 2), 2));
+    const idx = this.verts <= 65535 ? Uint16Array.from(this.idx.subarray(0, this.ni)) : this.idx.slice(0, this.ni);
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    return g;
+  }
+}
+
+/** Instance transforms packed as they're made (a Matrix4 object per window, three per window, added up to ~1M objects). */
+class XfList {
+  length = 0;
+  data = new Float32Array(16 * 1024);
+  push(m: THREE.Matrix4): void {
+    if ((this.length + 1) * 16 > this.data.length) {
+      const d = new Float32Array(this.data.length * 2); d.set(this.data); this.data = d;
+    }
+    this.data.set(m.elements, this.length++ * 16);
   }
 }

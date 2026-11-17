@@ -164,19 +164,27 @@ class Terrain {
       const xs = r.pts.map((q) => q[0]), zs = r.pts.map((q) => q[1]);
       return { x0: Math.min(...xs) - reach, x1: Math.max(...xs) + reach, z0: Math.min(...zs) - reach, z1: Math.max(...zs) + reach };
     });
+    // edges grouped by ring, so a cell outside a ring's box skips all of that ring's edges at once
+    const byRing: (typeof edges)[] = rings.map(() => []);
+    for (const e of edges) byRing[e.ring].push(e);
     for (let j = 0; j < this.nz; j++) {
       for (let i = 0; i < this.nx; i++) {
         const x = this.x0 + i * this.step, z = this.z0 + j * this.step;
         let best = Infinity, bestRing = -1;
-        for (const e of edges) {
-          const b = boxes[e.ring];
+        for (let r = 0; r < rings.length; r++) {
+          const b = boxes[r];
           if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) continue;
-          const dx = e.bx - e.ax, dz = e.bz - e.az;
-          const t = Math.max(0, Math.min(1, ((x - e.ax) * dx + (z - e.az) * dz) / (dx * dx + dz * dz || 1)));
-          const d = Math.hypot(x - e.ax - dx * t, z - e.az - dz * t);
-          if (d < best) {
-            best = d;
-            bestRing = e.ring;
+          const re = byRing[r];
+          for (let q = 0; q < re.length; q++) {
+            const e = re[q];
+            const dx = e.bx - e.ax, dz = e.bz - e.az;
+            const t = Math.max(0, Math.min(1, ((x - e.ax) * dx + (z - e.az) * dz) / (dx * dx + dz * dz || 1)));
+            const ex = x - e.ax - dx * t, ez = z - e.az - dz * t;
+            const d = Math.sqrt(ex * ex + ez * ez);
+            if (d < best) {
+              best = d;
+              bestRing = r;
+            }
           }
         }
         // inside any shoreline? then it is lake bed (even far from a real edge, e.g. along the map border)
@@ -543,7 +551,10 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     });
   }
   const inWater = (x: number, z: number): boolean => {
-    for (const w of waterPolys) if (x > w.minX && x < w.maxX && z > w.minZ && z < w.maxZ && inPoly(w.pts, x, z)) return true;
+    for (let i = 0; i < waterPolys.length; i++) {
+      const w = waterPolys[i];
+      if (x > w.minX && x < w.maxX && z > w.minZ && z < w.maxZ && inPoly(w.pts, x, z)) return true;
+    }
     return false;
   };
 
@@ -893,9 +904,28 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const windows = kit.finish();
   // pipes were recorded with absolute roof heights already
 
+  // footprints by 32 m cell: inBuilding runs hundreds of thousands of times while placing things
+  const BCELL = 32;
+  const bkey = (ix: number, iz: number) => ix * 100003 + iz;
+  const footGrid = new Map<number, Poly[]>();
+  for (const p of polys) {
+    for (let ix = Math.floor(p.minX / BCELL); ix <= Math.floor(p.maxX / BCELL); ix++) {
+      for (let iz = Math.floor(p.minZ / BCELL); iz <= Math.floor(p.maxZ / BCELL); iz++) {
+        const k = bkey(ix, iz);
+        let l = footGrid.get(k);
+        if (!l) footGrid.set(k, (l = []));
+        l.push(p);
+      }
+    }
+  }
   const inBuilding = (x: number, z: number): boolean => {
     if (stadium.inside(x, z) || inWater(x, z)) return true; // water counts as solid for placing things
-    for (const p of polys) if (x > p.minX && x < p.maxX && z > p.minZ && z < p.maxZ && inPoly(p.pts, x, z)) return true;
+    const l = footGrid.get(bkey(Math.floor(x / BCELL), Math.floor(z / BCELL)));
+    if (!l) return false;
+    for (let i = 0; i < l.length; i++) {
+      const p = l[i];
+      if (x > p.minX && x < p.maxX && z > p.minZ && z < p.maxZ && inPoly(p.pts, x, z)) return true;
+    }
     return false;
   };
 

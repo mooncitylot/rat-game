@@ -25,7 +25,8 @@ export function makePoly(pts: [number, number][], top: number): Poly {
 export function inPoly(pts: [number, number][], x: number, z: number): boolean {
   let inside = false;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const [xi, zi] = pts[i], [xj, zj] = pts[j];
+    const pi = pts[i], pj = pts[j];
+    const xi = pi[0], zi = pi[1], xj = pj[0], zj = pj[1];
     if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
   }
   return inside;
