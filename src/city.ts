@@ -559,6 +559,18 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const zebras: THREE.Matrix4[] = [];
   const lakeTrails: { pts: P2[]; half: number; kind: string }[] = [];
   const trailShoulders: THREE.BufferGeometry[] = [];
+  // Montrose Point (beach + bird sanctuary): mapped footways there become soft dirt/gravel paths, not sidewalks
+  const inNatureZone = (x: number, z: number): boolean => x > 1990 && x < 2520 && z > -2560 && z < -1850;
+  const naturePathGeos: THREE.BufferGeometry[] = [], naturePathCore: THREE.BufferGeometry[] = [];
+  const pathCells = new Map<number, number[]>(); // 4 m cells -> flat [x, z, halfWidth, ...] of nature-path samples
+  const onNaturePath = (x: number, z: number, pad = 0): boolean => {
+    const cx = Math.floor(x / 4), cz = Math.floor(z / 4);
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      const l = pathCells.get((cx + dx) * 100003 + (cz + dz));
+      if (l) for (let i = 0; i < l.length; i += 3) if (Math.hypot(x - l[i], z - l[i + 1]) < l[i + 2] + pad) return true;
+    }
+    return false;
+  };
   const trailDashes: THREE.Matrix4[] = [];
   const pendingWalks: (typeof data.roads)[number][] = [];
   const motorways: (typeof data.roads)[number][] = [];
@@ -620,6 +632,20 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       reach(pts[pts.length - 1], pts[pts.length - 2]);
       reach(pts[0], pts[1]);
     }
+    const mid = pts[Math.floor(pts.length / 2)];
+    if (!r.br && !r.n && r.f !== 'sidewalk' && (r.k === 'footway' || r.k === 'path') && inNatureZone(mid[0], mid[1])) {
+      const pw = r.k === 'path' ? 1.7 : 2.1; // narrow, informal
+      footways.push({ pts, crossing: false });
+      naturePathGeos.push(ribbon(pts, pw + 0.9, terrain, 0.03, 3)); // worn, darker edge
+      naturePathCore.push(ribbon(pts, pw, terrain, 0.05, 3)); // pale packed gravel
+      for (const q of resample(pts, 1.5)) {
+        const k = Math.floor(q[0] / 4) * 100003 + Math.floor(q[1] / 4);
+        let l = pathCells.get(k);
+        if (!l) pathCells.set(k, (l = []));
+        l.push(q[0], q[1], pw / 2 + 0.45);
+      }
+      continue;
+    }
     const width = Math.max(r.w, 3.0);
     footways.push({ pts, crossing: false });
     walkGeos.push(ribbon(pts, width, terrain, 0.0, 4, 0.16));
@@ -641,6 +667,14 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   }
   if (roadGeos.length) group.add(shadowed(new THREE.Mesh(mergeGeometries(roadGeos, false)!, roadMat)));
   if (walkGeos.length) group.add(shadowed(new THREE.Mesh(mergeGeometries(walkGeos, false)!, walkMat)));
+  for (const [geos, color, off] of [[naturePathGeos, 0x8d7a58, -1.5], [naturePathCore, 0xcbb88c, -2.5]] as const) {
+    if (!geos.length) continue;
+    const m = toon(color);
+    m.polygonOffset = true;
+    m.polygonOffsetFactor = off;
+    m.polygonOffsetUnits = off;
+    group.add(shadowed(new THREE.Mesh(mergeGeometries(geos as THREE.BufferGeometry[], false)!, m)));
+  }
   // ---- road paint: double yellow down two-way streets, white lines marking the parking lane at each kerb ----
   {
     const CELL = 24;
@@ -1096,7 +1130,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
         if (road && road.d < 0.7) continue;
         const al = segs.nearest(x, z, true);
         if (al && al.d < 0.7) continue;
-        if (collider.slab(x, z) > 0 || inBuilding(x, z)) continue;
+        if (collider.slab(x, z) > 0 || inBuilding(x, z) || onNaturePath(x, z)) continue;
         // keep the ballpark's frontage clear: nothing within ~24 m of the stadium footprint
         if (x > -150 && x < 115 && z > -105 && z < 165 && [9, 24].some((d) => stadium.inside(x + d, z) || stadium.inside(x - d, z) || stadium.inside(x, z + d) || stadium.inside(x, z - d))) continue;
         ox.push(x);
@@ -1140,6 +1174,24 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       }
     }
   }
+  // ---- Montrose Point Bird Sanctuary: a dense mixed woodland, with the dirt paths left open ----
+  {
+    const SANCTUARY: P2[] = [[2125, -2285], [2380, -2285], [2430, -2200], [2445, -2100], [2430, -2000], [2385, -1930], [2300, -1915], [2130, -1915], [2118, -2000]];
+    forests.push(SANCTUARY);
+    const GREENS = [0x3f7a3c, 0x4f8a3c, 0x2f6a3f, 0x5c8f3a, 0x6a9a3a, 0x3a7a4a, 0x86a83c, 0xb0a23a];
+    const minX = 2118, maxX = 2445, minZ = -2285, maxZ = -1915, step = 5;
+    let n = 0;
+    for (let gx = minX; gx < maxX; gx += step) {
+      for (let gz = minZ; gz < maxZ; gz += step) {
+        const x = gx + rand() * step, z = gz + rand() * step;
+        if (n >= 3600 || !inPoly(SANCTUARY, x, z) || inBuilding(x, z) || collider.slab(x, z) > 0 || onNaturePath(x, z, 1.2)) continue;
+        if (Math.sin(x * 0.021 + 1) * Math.cos(z * 0.026) > 0.82) continue; // a few clearings
+        const conifer = rand() < 0.25;
+        treeSpots.push({ x, z, s: conifer ? 0.9 + rand() * 0.9 : 0.8 + rand() * 1.0, c: conifer ? [0x2f6a3f, 0x3a7a4a, 0x285a38][Math.floor(rand() * 3)] : GREENS[Math.floor(rand() * GREENS.length)], conifer });
+        n++;
+      }
+    }
+  }
   for (const p of data.parks) {
     if (!/^(park|garden|grass|village_green|recreation_ground|dog_park|wood|forest|scrub)$/.test(p.k) || p.p.length < 3) continue;
     const pts = p.p;
@@ -1161,7 +1213,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     for (let gx = minX; gx < maxX; gx += step) {
       for (let gz = minZ; gz < maxZ; gz += step) {
         const x = gx + (rand() - 0.5) * step * 0.9, z = gz + (rand() - 0.5) * step * 0.9;
-        if (treeSpots.length >= 6000 || !inPoly(pts, x, z) || inBuilding(x, z) || collider.slab(x, z) > 0) continue;
+        if (treeSpots.length >= 6000 || !inPoly(pts, x, z) || inBuilding(x, z) || collider.slab(x, z) > 0 || onNaturePath(x, z, 1.2)) continue;
         treeSpots.push({ x, z, s: 0.9 + rand() * 0.9, c: LEAVES[Math.floor(rand() * LEAVES.length)] });
       }
     }
@@ -1299,7 +1351,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       for (let gx = minX; gx < maxX; gx += step) {
         for (let gz = minZ; gz < maxZ; gz += step) {
           const x = gx + rand() * step, z = gz + rand() * step;
-          if (!inPoly(pts, x, z) || inBuilding(x, z) || nearEdge(x, z, 3) || collider.slab(x, z) > 0) continue;
+          if (!inPoly(pts, x, z) || inBuilding(x, z) || nearEdge(x, z, 3) || collider.slab(x, z) > 0 || onNaturePath(x, z)) continue;
           if (tufts.length < TUFT_CAP) tufts.push({ x, z, s: 0.8 + rand() * 0.5, c: tint() });
           const r = rand();
           if (r < 0.03 && flowers.length < FLOWER_CAP && !wooded) {
