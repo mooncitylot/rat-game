@@ -45,26 +45,10 @@ export interface CityData {
   shops: { p: P2; name: string; kind: string }[];
 }
 
-/** Fetch the baked city, reporting download progress (0..1) when the server says how big it is. */
-export async function loadCity(name: string, onProgress?: (frac: number) => void): Promise<CityData> {
+export async function loadCity(name: string): Promise<CityData> {
   const res = await fetch(asset(`/city/${name}.json`));
   if (!res.ok) throw new Error(`no baked city ${name}`);
-  const total = Number(res.headers.get('content-length')); // absent or compressed-size on some servers: then no bar, just the shimmer
-  if (!res.body || !onProgress || !total) return res.json();
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    got += value.length;
-    onProgress(Math.min(1, got / total));
-  }
-  const all = new Uint8Array(got);
-  let at = 0;
-  for (const c of chunks) { all.set(c, at); at += c.length; }
-  return JSON.parse(new TextDecoder().decode(all));
+  return res.json();
 }
 
 /**
@@ -164,27 +148,19 @@ class Terrain {
       const xs = r.pts.map((q) => q[0]), zs = r.pts.map((q) => q[1]);
       return { x0: Math.min(...xs) - reach, x1: Math.max(...xs) + reach, z0: Math.min(...zs) - reach, z1: Math.max(...zs) + reach };
     });
-    // edges grouped by ring, so a cell outside a ring's box skips all of that ring's edges at once
-    const byRing: (typeof edges)[] = rings.map(() => []);
-    for (const e of edges) byRing[e.ring].push(e);
     for (let j = 0; j < this.nz; j++) {
       for (let i = 0; i < this.nx; i++) {
         const x = this.x0 + i * this.step, z = this.z0 + j * this.step;
         let best = Infinity, bestRing = -1;
-        for (let r = 0; r < rings.length; r++) {
-          const b = boxes[r];
+        for (const e of edges) {
+          const b = boxes[e.ring];
           if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) continue;
-          const re = byRing[r];
-          for (let q = 0; q < re.length; q++) {
-            const e = re[q];
-            const dx = e.bx - e.ax, dz = e.bz - e.az;
-            const t = Math.max(0, Math.min(1, ((x - e.ax) * dx + (z - e.az) * dz) / (dx * dx + dz * dz || 1)));
-            const ex = x - e.ax - dx * t, ez = z - e.az - dz * t;
-            const d = Math.sqrt(ex * ex + ez * ez);
-            if (d < best) {
-              best = d;
-              bestRing = r;
-            }
+          const dx = e.bx - e.ax, dz = e.bz - e.az;
+          const t = Math.max(0, Math.min(1, ((x - e.ax) * dx + (z - e.az) * dz) / (dx * dx + dz * dz || 1)));
+          const d = Math.hypot(x - e.ax - dx * t, z - e.az - dz * t);
+          if (d < best) {
+            best = d;
+            bestRing = e.ring;
           }
         }
         // inside any shoreline? then it is lake bed (even far from a real edge, e.g. along the map border)
@@ -551,10 +527,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     });
   }
   const inWater = (x: number, z: number): boolean => {
-    for (let i = 0; i < waterPolys.length; i++) {
-      const w = waterPolys[i];
-      if (x > w.minX && x < w.maxX && z > w.minZ && z < w.maxZ && inPoly(w.pts, x, z)) return true;
-    }
+    for (const w of waterPolys) if (x > w.minX && x < w.maxX && z > w.minZ && z < w.maxZ && inPoly(w.pts, x, z)) return true;
     return false;
   };
 
@@ -904,28 +877,9 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const windows = kit.finish();
   // pipes were recorded with absolute roof heights already
 
-  // footprints by 32 m cell: inBuilding runs hundreds of thousands of times while placing things
-  const BCELL = 32;
-  const bkey = (ix: number, iz: number) => ix * 100003 + iz;
-  const footGrid = new Map<number, Poly[]>();
-  for (const p of polys) {
-    for (let ix = Math.floor(p.minX / BCELL); ix <= Math.floor(p.maxX / BCELL); ix++) {
-      for (let iz = Math.floor(p.minZ / BCELL); iz <= Math.floor(p.maxZ / BCELL); iz++) {
-        const k = bkey(ix, iz);
-        let l = footGrid.get(k);
-        if (!l) footGrid.set(k, (l = []));
-        l.push(p);
-      }
-    }
-  }
   const inBuilding = (x: number, z: number): boolean => {
     if (stadium.inside(x, z) || inWater(x, z)) return true; // water counts as solid for placing things
-    const l = footGrid.get(bkey(Math.floor(x / BCELL), Math.floor(z / BCELL)));
-    if (!l) return false;
-    for (let i = 0; i < l.length; i++) {
-      const p = l[i];
-      if (x > p.minX && x < p.maxX && z > p.minZ && z < p.maxZ && inPoly(p.pts, x, z)) return true;
-    }
+    for (const p of polys) if (x > p.minX && x < p.maxX && z > p.minZ && z < p.maxZ && inPoly(p.pts, x, z)) return true;
     return false;
   };
 
@@ -1624,8 +1578,6 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
           return { name: forests.length > 1 ? `Forest ${i + 1}` : 'Forest', x: cx, z: cz };
         }),
         ...(lake.shoreX !== null ? [{ name: 'Lake Michigan', x: lake.shoreX - 14, z: 0 }] : []),
-        // Chicago grid: 100 address numbers = 1/8 mile = 201.2 m, and the world is 1.25x real size. Wrigley sits at ~3650 N.
-        ...([['Irving Park Rd', 4000], ['Montrose Ave', 4400], ['Lawrence Ave', 4800], ['Foster Ave', 5200], ['Bryn Mawr Ave', 5600]] as const).map(([name, n]) => ({ name, x: 0, z: -((n - 3650) / 100) * 201.2 * 1.25 })).filter((p) => p.z > B.z0 + 100),
         { name: 'Devon Ave', x: 0, z: B.z0 + 50 },
         { name: 'South end', x: 0, z: ext * 0.8 },
         { name: 'West end', x: -ext * 0.8, z: 0 },
