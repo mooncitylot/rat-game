@@ -10,6 +10,7 @@ import { InkPipeline } from './ink';
 import { Rat, MAX_FUEL } from './rat';
 import { buildCity, loadCity } from './city';
 import { MapView } from './mapview';
+import { loading } from './loading';
 import { Judges, type Verdict } from './pageant';
 import { Crowd } from './crowd';
 import { chunkInstances, cullChunks, instancify, splitMeshes, type ChunkedInstances } from './chunk';
@@ -94,15 +95,24 @@ async function createWorld(): Promise<World> {
   const q = new URLSearchParams(location.search);
   if (q.get('map') !== 'grid') {
     try {
-      const data = await loadCity(q.get('map') ?? 'wrigleyville');
+      loading.stage('Fetching the map', 0);
+      const data = await loadCity(q.get('map') ?? 'wrigleyville', (f) => loading.stage(`Fetching the map ${Math.round(f * 100)}%`, f));
+      loading.stage('Building the city');
+      await loading.paint(); // buildCity blocks the thread: get the text on screen first
       return buildCity(data, gradient, { exag: Number(q.get('exag') ?? 1) });
     } catch (e) {
-      console.warn('city failed, using the grid world', e);
+      console.error('city failed to load', e);
+      loading.fail("The city didn't load. Check your connection and try again, or play on the practice grid.");
+      await new Promise(() => {}); // stay on the error screen
     }
   }
+  loading.stage('Building the grid');
+  await loading.paint();
   return buildWorld(gradient);
 }
 const world = await createWorld();
+loading.stage('Waking up the rats');
+await loading.paint();
 if (world.osmCredit) {
   const c = document.getElementById('credit');
   if (c) c.textContent = `Map data ${world.osmCredit} · terrain: Mapzen/AWS`;
@@ -682,3 +692,4 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+requestAnimationFrame(() => requestAnimationFrame(() => loading.done())); // once the first frame has actually been drawn

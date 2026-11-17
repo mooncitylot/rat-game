@@ -44,7 +44,7 @@ if (fs.existsSync(rawPath)) {
   osm = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
   console.log('using cached', rawPath);
 } else {
-  const BAND = 900; // real metres of latitude per request
+  const BAND = 450; // real metres of latitude per request
   const nBands = Math.max(1, Math.ceil(((north - south) * M_LAT) / BAND));
   const seen = new Set(), elements = [];
   for (let k = 0; k < nBands; k++) {
@@ -68,7 +68,11 @@ if (fs.existsSync(rawPath)) {
   node["shop"](${bb});
 );
 out geom;`;
-    const part = await overpass(q, `band ${k + 1}/${nBands}`);
+    // each finished band is cached, so a failed run resumes at the band that failed (the key includes the box, so a changed box re-fetches)
+    const bandFile = `data/bands/${name}.${bb.replaceAll(',', '_')}.json`;
+    let part;
+    if (fs.existsSync(bandFile)) { part = fs.readFileSync(bandFile, 'utf8'); console.log(`band ${k + 1}/${nBands} cached`); }
+    else { part = await overpass(q, `band ${k + 1}/${nBands}`); fs.mkdirSync('data/bands', { recursive: true }); fs.writeFileSync(bandFile, part); }
     for (const e of JSON.parse(part).elements) {
       const id = e.type + e.id;
       if (!seen.has(id)) { seen.add(id); elements.push(e); } // ways crossing a band edge come back twice
