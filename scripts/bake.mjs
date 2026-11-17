@@ -216,24 +216,60 @@ else {
   fs.writeFileSync(lakePath, text);
   rels = JSON.parse(text);
 }
+// An outline is split over many member ways once the box is big (the lake shore inside the Devon box is 7 ways,
+// one of them running the other way). Join them end to end before using them: each piece on its own is not a shore.
+const stitch = (chains) => {
+  const same = (a, b) => Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5;
+  const left = chains.map((c) => c.slice());
+  const out = [];
+  while (left.length) {
+    let cur = left.shift();
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (let i = 0; i < left.length; i++) {
+        const c = left[i];
+        if (same(cur.at(-1), c[0])) cur = cur.concat(c.slice(1));
+        else if (same(cur.at(-1), c.at(-1))) cur = cur.concat(c.slice(0, -1).reverse());
+        else if (same(cur[0], c.at(-1))) cur = c.slice(0, -1).concat(cur);
+        else if (same(cur[0], c[0])) cur = c.slice(1).reverse().concat(cur);
+        else continue;
+        left.splice(i, 1);
+        grew = true;
+        break;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
+};
 let lakeIdx = -1;
 for (const rel of rels.elements ?? []) {
   const isLake = rel.tags?.name === 'Lake Michigan';
-  for (const m of rel.members ?? []) {
-    if (m.role !== 'outer') continue;
-    const chain = (m.geometry ?? []).filter(Boolean).map((q) => toXZ(q.lat, q.lon).map(r2));
-    if (chain.length < 3) continue;
-    if (isLake) {
-      if (chain[0][1] > chain.at(-1)[1]) chain.reverse(); // north (small z) -> south
-      // run the ends straight out to the edges of the baked area, then close the polygon along the east side
-      const lean = (a, b, zt) => { const dz = b[1] - a[1] || 1; return [r2(b[0] + ((b[0] - a[0]) / dz) * (zt - b[1])), zt]; };
-      const n = chain.length;
-      const poly = [lean(chain[1], chain[0], Z0 - 20), ...chain, lean(chain[n - 2], chain[n - 1], Z1 + 20), [X1 + 40, Z1 + 20], [X1 + 40, Z0 - 20]];
-      lakeIdx = water.length;
-      water.push(poly);
-      console.log('lake shore x', Math.round(Math.min(...chain.map((q) => q[0]))), '..', Math.round(Math.max(...chain.map((q) => q[0]))));
-    } else water.push(chain); // harbour basin: just close it
-  }
+  const pieces = (rel.members ?? [])
+    .filter((m) => m.role === 'outer')
+    .map((m) => (m.geometry ?? []).filter(Boolean).map((q) => toXZ(q.lat, q.lon).map(r2)))
+    .filter((c) => c.length >= 2);
+  const chains = stitch(pieces).filter((c) => c.length >= 3);
+  if (isLake) {
+    if (!chains.length) continue;
+    const chain = chains.reduce((a, b) => (b.length > a.length ? b : a)); // the shore that crosses the box
+    if (chains.length > 1) console.log(`lake: ${chains.length} separate shore pieces, using the longest`);
+    if (chain[0][1] > chain.at(-1)[1]) chain.reverse(); // north (small z) -> south
+    // run the ends straight out to the edges of the baked area, then close the polygon along the east side.
+    // The direction comes from a point ~30 m in, so a couple of close-together end nodes can't fling it sideways.
+    const lean = (chainEnd, inward, zt) => {
+      const b = chainEnd;
+      let a = inward[0];
+      for (const q of inward) { a = q; if (Math.hypot(q[0] - b[0], q[1] - b[1]) > 30) break; }
+      const dz = b[1] - a[1] || 1;
+      return [r2(b[0] + ((b[0] - a[0]) / dz) * (zt - b[1])), zt];
+    };
+    const n = chain.length;
+    const poly = [lean(chain[0], chain.slice(1), Z0 - 20), ...chain, lean(chain[n - 1], chain.slice(0, -1).reverse(), Z1 + 20), [X1 + 40, Z1 + 20], [X1 + 40, Z0 - 20]];
+    lakeIdx = water.length;
+    water.push(poly);
+    console.log('lake shore x', Math.round(Math.min(...chain.map((q) => q[0]))), '..', Math.round(Math.max(...chain.map((q) => q[0]))));
+  } else for (const c of chains) water.push(c); // harbour basin: just close it
 }
 if (lakeIdx < 0) console.log('NO lake outline found');
 
