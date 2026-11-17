@@ -75,6 +75,8 @@ export function getBusParts(gradient: THREE.DataTexture): BusParts {
 function shelterGeo(): THREE.BufferGeometry {
   const FRAME = 0x2f3d46;
   const parts: THREE.BufferGeometry[] = [
+    cube(5.4, 0.6, 3.0, 0.4, -0.3, 0.05, 0xa8a49c), // concrete pad (instance is raised 8 cm so its top sits above the grass)
+    cube(5.4, 0.012, 0.22, 0.4, 0.006, 1.42, 0xd9b43a), // yellow edge strip toward the road
     cube(3.2, 0.12, 1.7, 0, 2.5, 0, 0x3f4f58), // roof
     cube(3.1, 1.9, 0.05, 0, 1.45, -0.78, 0x9cc4d0), // glass back
     cube(0.05, 1.9, 1.5, -1.52, 1.45, 0, 0x9cc4d0), // glass side
@@ -102,7 +104,7 @@ export function buildBusStops(spots: StopSpot[], ground: (x: number, z: number) 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
   spots.forEach((s, i) => {
     q.setFromAxisAngle(up, Math.atan2(s.fx, s.fz));
-    mesh.setMatrixAt(i, m.compose(new THREE.Vector3(s.x, ground(s.x, s.z), s.z), q, new THREE.Vector3(1, 1, 1)));
+    mesh.setMatrixAt(i, m.compose(new THREE.Vector3(s.x, ground(s.x, s.z) + 0.08, s.z), q, new THREE.Vector3(1, 1, 1)));
   });
   mesh.castShadow = mesh.receiveShadow = true;
   mesh.frustumCulled = false;

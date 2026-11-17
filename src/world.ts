@@ -253,7 +253,7 @@ export function buildWorld(gradient: THREE.DataTexture): World {
         }
       }
 
-      // alley clutter: dumpsters (primitive), Poly Haven crates / barrels / boxes / a tyre
+      // alley clutter: dumpsters (primitive), Poly Haven crates / bags / boxes / a tyre
       const zs = [cz - 9, cz - 2, cz + 6, cz + 11];
       zs.forEach((z, i) => {
         const side = i % 2 === 0 ? -1 : 1;
@@ -267,7 +267,7 @@ export function buildWorld(gradient: THREE.DataTexture): World {
           const top = solid('plastic_crate_01', x, z, 0.22 + 0.35 * 1.3, 1.5, Math.PI / 2);
           otherSpots.push([x, top.top, z]);
         } else {
-          solid('Barrel_01', x, z, 0.22, 1.3);
+          solid('trashbag', x, z, 0.22, 1.3, rand() * 6);
         }
       });
       solid('cardboard_box_01', cx - 0.7, cz + 12.9, 0.22, 1.3, rand() * Math.PI);

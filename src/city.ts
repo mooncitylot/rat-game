@@ -908,6 +908,8 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
 
   // ---- alley clutter + cat patrols ----
   const dumpMat = toon(0x2f6b4a);
+  const dumpMat2 = toon(0x35506b); // blue dumpsters too
+  const dumpLidMat = toon(0x1f2a26);
   const cheeseSpots: [number, number, number][] = [];
   const along = (pts: P2[], step: number, fn: (x: number, z: number, tx: number, tz: number, i: number) => void) => {
     let carry = step * 0.5, i = 0;
@@ -933,19 +935,24 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       const off = Math.max(0.9, al.half - 1.0);
       const px = x - tz * off * side, pz = z + tx * off * side;
       const ang = Math.atan2(tx, tz);
-      const kind = i % 4;
-      if (kind === 0) {
-        // dumpster (primitive)
+      const kind = i % 6;
+      if (kind === 0 || kind === 3) {
+        // dumpster: green body, darker lid, a bright rim stripe, a pile of bags beside every other one
         if (inBuilding(px, pz)) return;
         const y0 = terrain.at(px, pz) + 0.05;
-        const d = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 2.2), dumpMat), true);
+        const d = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 2.2), kind === 0 ? dumpMat : dumpMat2), true);
         d.position.set(px, y0 + 0.55, pz);
         d.rotation.y = ang;
         group.add(d);
+        const lidM = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 2.3), dumpLidMat), true);
+        lidM.position.set(px, y0 + 1.16, pz);
+        lidM.rotation.y = ang;
+        group.add(lidM);
         const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang));
         const hx = (1.4 * c + 2.2 * s) / 2, hz = (1.4 * s + 2.2 * c) / 2;
-        collider.addBox({ minX: px - hx, maxX: px + hx, minZ: pz - hz, maxZ: pz + hz, top: y0 + 1.1 });
-        cheeseSpots.push([px, y0 + 1.1, pz]);
+        collider.addBox({ minX: px - hx, maxX: px + hx, minZ: pz - hz, maxZ: pz + hz, top: y0 + 1.22 });
+        cheeseSpots.push([px, y0 + 1.22, pz]);
+        if (kind === 3) solid('trashbag', px + tx * 2.0, pz + tz * 2.0, 1.2, i * 1.7);
       } else if (kind === 1) {
         const lower = solid('wooden_crate_01', px, pz, 1.3, ang);
         if (lower) {
@@ -953,8 +960,12 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
           void top;
           cheeseSpots.push([px, lower.top + 0.4, pz]);
         }
-      } else if (kind === 2) solid('Barrel_01', px, pz, 1.3, 0);
-      else solid(i % 8 === 3 ? 'cardboard_box_01' : 'metal_trash_can', px, pz, 1.2, ang);
+      } else if (kind === 2) {
+        // bags piled against the wall
+        for (let k = 0; k < 3; k++) solid('trashbag', px + tx * (k - 1) * 0.7, pz + tz * (k - 1) * 0.7, 1.2, i + k * 2.1);
+      } else if (kind === 4) {
+        solid(i % 12 === 4 ? 'utility_box_01' : 'metal_trash_can', px, pz, 1.2, ang);
+      } else solid(i % 12 === 5 ? 'old_tyre' : 'cardboard_box_01', px, pz, 1.2, ang);
     });
   }
 
@@ -967,6 +978,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     lamps.push(streetLamps.add(lx, terrain.at(lx, lz), lz, Math.atan2(nz, -nx), { h: tall ? 6.2 : 4.4, banner: tall }));
     void h;
   };
+  const manholes: number[][] = []; // [x, y, z, kind (0 cover, 1 drain), rotY]
   const treeSpots: { x: number; z: number; s: number; c: number; conifer?: boolean }[] = [];
   const forests: P2[][] = [];
   for (const st of streetLines) {
@@ -985,6 +997,21 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       const nx = -tz * (i % 2 ? 1 : -1), nz = tx * (i % 2 ? 1 : -1);
       solid('fire_hydrant', x + nx * (half + 0.4), z + nz * (half + 0.4), 1.3, 0);
     });
+    // manhole covers down the middle of the lane, storm drains in the gutter
+    if (st.half >= 4 && st.half < 14) {
+      along(st.pts, 62, (x, z, tx, tz) => {
+        const o = (rand() - 0.5) * st.half * 0.9;
+        const mx = x - tz * o, mz = z + tx * o;
+        if (inBuilding(mx, mz)) return;
+        manholes.push([mx, terrain.at(mx, mz) + 0.045, mz, 0]);
+      });
+      along(st.pts, 38, (x, z, tx, tz, i) => {
+        const side = i % 2 ? 1 : -1;
+        const gx = x - tz * (st.half - 0.45) * side, gz = z + tx * (st.half - 0.45) * side;
+        if (inBuilding(gx, gz) || nearEdge(gx, gz, 12)) return;
+        manholes.push([gx, terrain.at(gx, gz) + 0.045, gz, 1, Math.atan2(tx, tz)]);
+      });
+    }
     along(st.pts, 11, (x, z, tx, tz, i) => {
       if (rand() < 0.3) return;
       const side = i % 2 ? 1 : -1;
@@ -996,6 +1023,30 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   }
   const powerLines = buildPowerLines({ streets: streetLines, terrainAt: (x, z) => terrain.at(x, z), blocked: inBuilding, addBox: (b) => collider.addBox(b), gradient, nearEdge, rand });
   group.add(powerLines.group);
+  {
+    const covers = manholes.filter((m) => m[3] === 0), drains = manholes.filter((m) => m[3] === 1);
+    const flatMat = (c: number) => {
+      const m = toon(c);
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = -3;
+      m.polygonOffsetUnits = -3;
+      return m;
+    };
+    const mk = (geo: THREE.BufferGeometry, mat: THREE.Material, list: number[][]) => {
+      if (!list.length) return;
+      const im = new THREE.InstancedMesh(geo, mat, list.length);
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+      list.forEach((m, i) => {
+        q.setFromAxisAngle(up, m[4] ?? rand() * 6);
+        im.setMatrixAt(i, m4.compose(new THREE.Vector3(m[0], m[1], m[2]), q, new THREE.Vector3(1, 1, 1)));
+      });
+      im.receiveShadow = true;
+      im.frustumCulled = false;
+      group.add(im);
+    };
+    mk(new THREE.CylinderGeometry(0.42, 0.42, 0.03, 18), flatMat(0x3a3836), covers);
+    mk(new THREE.BoxGeometry(0.4, 0.03, 0.9), flatMat(0x1f1e22), drains);
+  }
   // ---- open ground: every lawn, yard and courtyard that isn't a building, street or sidewalk gets plant life ----
   type Plant = { x: number; z: number; s: number; c: number };
   const wild = { tufts: [] as Plant[], tall: [] as Plant[], flowers: [] as Plant[], bushes: [] as Plant[] };
