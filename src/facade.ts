@@ -660,7 +660,7 @@ export class FacadeKit {
   }
 
   /** Bake the merged trim and the instanced window parts. Returns the glass mesh (the lights) and its thresholds. */
-  finish(): { mesh: THREE.InstancedMesh; thr: number[] } {
+  finish(): { mesh: THREE.InstancedMesh; thr: number[]; pos: Float32Array } {
     for (const [mat, geos] of this.batches) {
       const merged = mergeGeometries(geos, false);
       if (!merged) continue;
@@ -699,6 +699,12 @@ export class FacadeKit {
     mk(sillGeo, this.stoneMat, this.sillXf, true);
     const glass = mk(glassGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), this.glassXf, false);
     this.glassXf.forEach((_, i) => glass.setColorAt(i, new THREE.Color(0x232a3d)));
-    return { mesh: glass, thr: this.thr };
+    // per window: world x, y, z of the pane and its outward normal (x, z), so lit windows can cast light
+    const pos = new Float32Array(this.glassXf.length * 5);
+    this.glassXf.forEach((m, i) => {
+      const e = m.elements;
+      pos.set([e[12], e[13], e[14], e[8], e[10]], i * 5);
+    });
+    return { mesh: glass, thr: this.thr, pos };
   }
 }

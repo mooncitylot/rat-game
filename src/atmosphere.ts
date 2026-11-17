@@ -129,6 +129,9 @@ export class Atmosphere {
   dayLength = 300;
 
   private lamps: THREE.PointLight[] = [];
+  private winLights: THREE.PointLight[] = []; // fixed pool, moved onto the nearest lit windows
+  private winLightTimer = 0;
+  private winLightLevel = 0;
   private rainMat: THREE.ShaderMaterial;
   private rainTarget = 0;
   private weatherTimer = 50;
@@ -167,6 +170,11 @@ export class Atmosphere {
       const l = new THREE.PointLight(0xffd9a0, 0, 26, 2);
       scene.add(l);
       this.lamps.push(l);
+    }
+    for (let i = 0; i < 6; i++) {
+      const l = new THREE.PointLight(0xffc873, 0, 16, 2);
+      scene.add(l);
+      this.winLights.push(l);
     }
     this.lampOrder = world.lamps.map((_, i) => i);
 
@@ -331,6 +339,46 @@ export class Atmosphere {
         else mesh.setColorAt(w, this.winDark);
       }
       if (mesh instanceof THREE.InstancedMesh) { if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true; } else mesh.colorsChanged();
+    }
+
+    // ---- lit windows throw light: the pool hops onto the nearest lit panes (rescanned a few times a second) ----
+    const level = e.night + e.rain * 0.12;
+    this.winLightLevel = Math.min(1, smooth(0.15, 0.6, e.night) + e.rain * 0.2 * (1 - e.night));
+    this.winLightTimer -= dt;
+    if (this.winLightTimer <= 0) {
+      this.winLightTimer = 0.25;
+      const { thr, pos } = this.world.windows;
+      const R2 = 45 * 45;
+      const picks: { d: number; i: number }[] = [];
+      if (this.winLightLevel > 0.01) {
+        for (let w = 0; w < thr.length; w++) {
+          if (level + 0.02 <= thr[w]) continue;
+          const dx = pos[w * 5] - focus.x, dy = pos[w * 5 + 1] - focus.y, dz = pos[w * 5 + 2] - focus.z;
+          const d = dx * dx + dy * dy + dz * dz;
+          if (d < R2) picks.push({ d, i: w });
+        }
+        picks.sort((a, b) => a.d - b.d);
+      }
+      const chosen: number[] = [];
+      for (const p of picks) {
+        if (chosen.length >= this.winLights.length) break;
+        const x = pos[p.i * 5], y = pos[p.i * 5 + 1], z = pos[p.i * 5 + 2];
+        // spread out: skip panes right beside one already lit
+        if (chosen.some((c) => Math.hypot(pos[c * 5] - x, pos[c * 5 + 1] - y, pos[c * 5 + 2] - z) < 6)) continue;
+        chosen.push(p.i);
+      }
+      this.winLights.forEach((l, k) => {
+        const w = chosen[k];
+        if (w === undefined) { l.userData.on = 0; return; }
+        l.userData.on = 1;
+        l.position.set(pos[w * 5] + pos[w * 5 + 3] * 1.2, pos[w * 5 + 1], pos[w * 5 + 2] + pos[w * 5 + 4] * 1.2);
+        l.color.copy(this.winLit[w % 3]);
+      });
+    }
+    // ease intensity so lights fade between windows instead of popping
+    for (const l of this.winLights) {
+      const target = (l.userData.on ? 22 : 0) * this.winLightLevel;
+      l.intensity += (target - l.intensity) * Math.min(1, dt * 8);
     }
 
     // ---- painted sky dome ----

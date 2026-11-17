@@ -43,7 +43,7 @@ export interface World {
   nest: THREE.Vector3;
   lamps: THREE.Vector3[];
   bulbMat: THREE.MeshBasicMaterial;
-  windows: { mesh: THREE.InstancedMesh | ChunkedInstances; thr: number[] };
+  windows: { mesh: THREE.InstancedMesh | ChunkedInstances; thr: number[]; pos: Float32Array };
   propsReady?: Promise<void>; // every Poly Haven prop loaded and placed
   rings: Ring[]; // sidewalk loops the pedestrians walk (grid world)
   walkNet: Net; // pedestrian graph
