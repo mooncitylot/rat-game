@@ -1102,7 +1102,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       if (!inBuilding(px, pz)) pigeonSpots.push({ x: px, y: terrain.at(px, pz) + collider.slab(px, pz), z: pz, yaw: pr() * 6.28, ground: true });
     }
   }
-  const flock = buildFlock(pigeonSpots, 10000, gradient, rng(1213));
+  const flock = buildFlock(pigeonSpots, Math.round(((B.x1 - B.x0) * (B.z1 - B.z0)) / 1000), gradient, rng(1213)); // one bird per 1000 m²
   group.add(flock.group);
   {
     const covers = manholes.filter((m) => m[3] === 0), drains = manholes.filter((m) => m[3] === 1);
@@ -1221,8 +1221,8 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       }
     }
   }
-  // ---- Montrose Point Bird Sanctuary: a dense mixed woodland, with the dirt paths left open ----
-  {
+  // ---- Montrose Point Bird Sanctuary: a dense mixed woodland, with the dirt paths left open (only when the bake reaches Uptown) ----
+  if (B.z0 < -2285 && B.x1 > 2445) {
     const SANCTUARY: P2[] = [[2125, -2285], [2380, -2285], [2430, -2200], [2445, -2100], [2430, -2000], [2385, -1930], [2300, -1915], [2130, -1915], [2118, -2000]];
     forests.push(SANCTUARY);
     const GREENS = [0x3f7a3c, 0x4f8a3c, 0x2f6a3f, 0x5c8f3a, 0x6a9a3a, 0x3a7a4a, 0x86a83c, 0xb0a23a];
@@ -1728,7 +1728,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
           return { name: forests.length > 1 ? `Forest ${i + 1}` : 'Forest', x: cx, z: cz };
         }),
         ...(lake.shoreX !== null ? [{ name: 'Lake Michigan', x: lake.shoreX - 14, z: 0 }] : []),
-        { name: 'Lawrence Ave', x: 0, z: B.z0 + 50 },
+        ...(B.z0 < -2000 ? [{ name: 'Lawrence Ave', x: 0, z: B.z0 + 50 }] : [{ name: 'North end', x: 0, z: B.z0 + 50 }]),
         { name: 'South end', x: 0, z: ext * 0.8 },
         { name: 'West end', x: -ext * 0.8, z: 0 },
       ],
