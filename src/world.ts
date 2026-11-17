@@ -122,7 +122,7 @@ export function buildWorld(gradient: THREE.DataTexture): World {
   const totalD = ROWS * PITCH + STREET;
 
   // asphalt
-  const asphalt = loadStyled('/textures/asphalt_02_diff_1k.jpg', { levels: 9, contrast: 0.2, sat: 0, blur: 5, recolor: 0x7e7e9a, gain: 1.3 });
+  const asphalt = loadStyled('/textures/asphalt_02_diff_1k.jpg', { levels: 9, contrast: 0.2, sat: 0, blur: 5, recolor: 0x8a8782, gain: 1.3 });
   asphalt.repeat.set(totalW / 8, totalD / 8);
   const road = shadowed(new THREE.Mesh(new THREE.PlaneGeometry(totalW, totalD), new THREE.MeshToonMaterial({ color: 0xffffff, map: asphalt, gradientMap: gradient })));
   road.rotation.x = -Math.PI / 2;

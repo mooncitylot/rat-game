@@ -13,15 +13,15 @@ export interface Env {
 // hour, sky/fog colour, hemisphere sky, hemisphere ground, hemisphere intensity, key colour, key intensity
 type Key = [number, number, number, number, number, number, number];
 const KEYS: Key[] = [
-  [0, 0x141a36, 0x6a7cc8, 0x2c2c40, 1.3, 0xb4c4ff, 1.9],
-  [5, 0x141a36, 0x6a7cc8, 0x2c2c40, 1.3, 0xb4c4ff, 1.9],
+  [0, 0x1a1c30, 0x8a90b8, 0x3a3436, 1.3, 0xd0d4f0, 1.9],
+  [5, 0x1a1c30, 0x8a90b8, 0x3a3436, 1.3, 0xd0d4f0, 1.9],
   [6.5, 0xf0a58a, 0xffd0c0, 0x6a4a52, 1.0, 0xffb98a, 2.0],
   [8.5, 0x9fd0ee, 0xcfe6ff, 0x7a6a62, 1.35, 0xfff2dc, 3.0],
   [15.5, 0x9fd0ee, 0xcfe6ff, 0x7a6a62, 1.35, 0xfff2dc, 3.0],
   [18, 0xe9a37a, 0xb9c8ff, 0x6a4a52, 1.1, 0xffc48a, 2.6],
-  [19.5, 0x5a3a62, 0x7a7ac0, 0x302838, 1.15, 0xff9a6a, 1.4],
-  [21, 0x141a36, 0x6a7cc8, 0x2c2c40, 1.3, 0xb4c4ff, 1.9],
-  [24, 0x141a36, 0x6a7cc8, 0x2c2c40, 1.3, 0xb4c4ff, 1.9],
+  [19.5, 0x5a3a62, 0x9a8ab0, 0x383036, 1.15, 0xff9a6a, 1.4],
+  [21, 0x1a1c30, 0x8a90b8, 0x3a3436, 1.3, 0xd0d4f0, 1.9],
+  [24, 0x1a1c30, 0x8a90b8, 0x3a3436, 1.3, 0xd0d4f0, 1.9],
 ];
 
 const smooth = (a: number, b: number, x: number) => {

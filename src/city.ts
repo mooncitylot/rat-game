@@ -532,7 +532,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   };
 
   // ---- materials ----
-  const asphalt = loadStyled('/textures/asphalt_02_diff_1k.jpg', { levels: 9, contrast: 0.25, sat: 0, blur: 4, recolor: 0x7e7e9a, gain: 1.25 });
+  const asphalt = loadStyled('/textures/asphalt_02_diff_1k.jpg', { levels: 9, contrast: 0.25, sat: 0, blur: 4, recolor: 0x8a8782, gain: 1.25 });
   const pavement = slabTexture(); // big poured-concrete slabs
   const grassMat = toon(0xffffff, grass);
   breakTiling(grassMat);

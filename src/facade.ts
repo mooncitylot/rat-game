@@ -167,7 +167,7 @@ export class FacadeKit {
       loadStyled(base + 'brick_wall_001_diffuse_1k.jpg', { size: 1024, levels: 6, contrast: 1.0, sat: 0.8, blur: 1.2 }), // worn
     ];
     this.plasters = [0xf0a5ac, 0x7fc2bd, 0xe6d9b0, 0xe0b24a].map((c) => loadStyled(base + 'beige_wall_001_diff_1k.jpg', { levels: 8, contrast: 1.1, recolor: c, gain: 1.15, seams: true }));
-    this.roofTex = loadStyled(base + 'concrete_wall_004_diff_1k.jpg', { levels: 6, recolor: 0x8a8a9c, gain: 1.3 });
+    this.roofTex = loadStyled(base + 'concrete_wall_004_diff_1k.jpg', { levels: 6, recolor: 0x948f88, gain: 1.3 });
     this.toon = (c, map) => new THREE.MeshToonMaterial({ color: c, gradientMap: gradient, map: map ?? null });
     this.stoneMat = this.toon(0xd6c9b2);
     this.stepMat = this.toon(0xffffff, loadStyled(base + 'concrete_wall_004_diff_1k.jpg', { size: 512, levels: 7, contrast: 1.2, recolor: 0xd4c8b0, gain: 1.55 }));
