@@ -364,6 +364,7 @@ addEventListener('mousemove', (e) => {
   camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.0025, 0.08, 1.2);
 });
 $('start').addEventListener('click', () => {
+  if ($('start').classList.contains('loading')) return; // not ready: world still streaming in, shaders compiling
   document.body.classList.add('playing');
   canvas.requestPointerLock?.();
   sfx.init();
@@ -372,7 +373,7 @@ document.addEventListener('pointerlockchange', () => {
   // gamepad players never hold pointer lock, so don't kick them back to the title screen
   if (document.pointerLockElement !== canvas && !mapView?.open && !pad.connected && !touch.enabled) document.body.classList.remove('playing');
 });
-if (location.search.includes('shot')) document.body.classList.add('playing'); // skip the title overlay for screenshots
+if (location.search.includes('shot')) { document.body.classList.add('playing'); $('start').classList.remove('loading'); } // skip the title overlay for screenshots
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -679,6 +680,14 @@ function frame(now: number) {
   const cpu2 = performance.now();
   if (statsOn) drawStats(Math.min(rawDt, 1), `cars ${fleet.cars.filter((c) => c.active).length}/${fleet.cars.length} · peds ${humans.filter((h) => h.active).length}/${humans.length} + crowd ${crowd.visible}/${crowd.size}`, cpu1 - cpu0, cpu2 - cpu1);
   tuneResolution(Math.min(rawDt, 1));
+  framesDrawn++;
   requestAnimationFrame(frame);
 }
+let framesDrawn = 0;
 requestAnimationFrame(frame);
+// the title screen stays locked until every model is in and a few frames have rendered (shader compiles hitch the first ones)
+void (async () => {
+  try { await world.propsReady; } catch (e) { console.warn('props failed to load', e); }
+  while (framesDrawn < 20) await new Promise((r) => setTimeout(r, 50));
+  $('start').classList.remove('loading');
+})();
