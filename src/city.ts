@@ -8,6 +8,7 @@ import { buildLakefront } from './lakefront';
 import { buildLakeShoreDrive } from './lakeshore';
 import { buildSeawall, shoreEdges, SEAWALL_APRON, type ShoreRing } from './seawall';
 import { FacadeKit, loadStyled } from './facade';
+import { buildBackyardFences, type FenceLot } from './fences';
 import { SHOP_NAMES } from './paint';
 import type { Box } from './physics';
 import { PolyNet } from './polynet';
@@ -823,6 +824,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   };
   const buildingFootprints: P2[][] = [];
   const stoopSolids: { pts: [number, number][]; top: number }[] = [];
+  const fenceLots: FenceLot[] = [];
 
   data.buildings.forEach((b, bi) => {
     const pts = rings[bi];
@@ -900,6 +902,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     });
     polys.push(makePoly(pts, r.roofY));
     buildingFootprints.push(pts);
+    if (!low) fenceLots.push({ pts, street, party });
     pipes.push(...r.pipes);
     for (const sh of r.solids) stoopSolids.push(sh);
     for (const pp of r.pipes) {
@@ -944,6 +947,15 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     return b;
   };
   void propBox;
+
+  // ---- backyard fences: along the alley and down the lot lines behind the houses ----
+  group.add(buildBackyardFences(fenceLots, {
+    ground: (x, z) => terrain.at(x, z),
+    inBuilding,
+    paved: (x, z) => onStreet(x, z, 0.8) || collider.slab(x, z) > 0 || onNaturePath(x, z, 0.5),
+    alley: (x, z) => segs.nearest(x, z, true)?.d ?? null,
+    solid: (pts, top) => collider.addPoly(makePoly(pts, top)),
+  }, gradient, rng(91573)));
 
   // ---- alley clutter + cat patrols ----
   const dumpMat = toon(0x2f6b4a);
