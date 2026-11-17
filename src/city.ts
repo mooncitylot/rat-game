@@ -926,8 +926,13 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const wrig = stadium.build({ group, gradient, bulbMat, terrainAt: (x, z) => terrain.at(x, z), addPoly: (p) => collider.addPoly(p), addBox: (b) => collider.addBox(b) });
   pipes.push(...wrig.pipes);
   const props = new Props(gradient, bulbMat);
+  /** is (x, z) on street asphalt (or within `pad` m of it)? Alleys don't count: clutter belongs there. */
+  const onStreet = (x: number, z: number, pad = 0.6): boolean => {
+    const r = segs.nearest(x, z, false);
+    return !!r && r.d < pad;
+  };
   const solid = (id: string, x: number, z: number, scale: number, rotY: number): Box | null => {
-    if (inBuilding(x, z)) return null;
+    if (inBuilding(x, z) || onStreet(x, z)) return null;
     const y0 = terrain.at(x, z) + 0.05;
     props.place(group, id, { x, y: y0, z, rotY, scale });
     // axis-aligned bounds of the rotated footprint
@@ -972,7 +977,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
       const kind = i % 6;
       if (kind === 0 || kind === 3) {
         // dumpster: green body, darker lid, a bright rim stripe, a pile of bags beside every other one
-        if (inBuilding(px, pz)) return;
+        if (inBuilding(px, pz) || onStreet(px, pz, 1.5)) return; // 1.5 m: dumpster is 2.2 m long
         const y0 = terrain.at(px, pz) + 0.05;
         const d = shadowed(new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 2.2), kind === 0 ? dumpMat : dumpMat2), true);
         d.position.set(px, y0 + 0.55, pz);
