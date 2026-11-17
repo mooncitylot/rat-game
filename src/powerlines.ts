@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 type P2 = [number, number];
 
@@ -8,8 +7,6 @@ const ARM_Y = POLE_H - 0.6;
 const ARM_OFFS = [-0.9, 0, 0.9]; // three wires per span, spread along the crossarm
 const SAG = 0.9;
 const MAX_SPAN = 60;
-const PIGEON_VIS = 90; // only pigeons this close to the rat are drawn / simulated
-const SCARE = 5.5;
 
 interface Span {
   ax: number; ay: number; az: number;
@@ -23,124 +20,14 @@ const spanPoint = (s: Span, u: number, out: THREE.Vector3): THREE.Vector3 =>
     s.az + (s.bz - s.az) * u,
   );
 
-type State = 'perched' | 'flying' | 'away';
-
-class Pigeon {
-  readonly group = new THREE.Group();
-  readonly wings: THREE.Mesh[];
-  state: State = 'perched';
-  span: Span;
-  u: number;
-  timer = 0;
-  private from = new THREE.Vector3();
-  private to = new THREE.Vector3();
-  private t = 0;
-  private dur = 1;
-  private arc = 3;
-  private phase = Math.random() * 6;
-
-  constructor(body: THREE.Object3D, wingGeo: THREE.BufferGeometry, wingMat: THREE.Material, span: Span, u: number) {
-    this.span = span;
-    this.u = u;
-    this.group.add(body.clone());
-    this.wings = [-1, 1].map((s) => {
-      const w = new THREE.Mesh(wingGeo, wingMat);
-      w.position.set(s * 0.05, 0.1, 0);
-      w.scale.x = s;
-      w.visible = false;
-      this.group.add(w);
-      return w;
-    });
-    this.group.scale.setScalar(1.5);
-    this.perch(span, u);
-  }
-
-  private perch(span: Span, u: number): void {
-    this.span = span;
-    this.u = u;
-    this.state = 'perched';
-    spanPoint(span, u, this.group.position);
-    this.group.position.y += 0.02;
-    // face along the wire, either way
-    this.group.rotation.set(0, Math.atan2(span.bx - span.ax, span.bz - span.az) + (this.phase > 3 ? Math.PI : 0), 0);
-    this.wings.forEach((w) => (w.visible = false));
-  }
-
-  private launch(to: THREE.Vector3, dur: number, arc: number): void {
-    this.from.copy(this.group.position);
-    this.to.copy(to);
-    this.t = 0;
-    this.dur = dur;
-    this.arc = arc;
-    this.wings.forEach((w) => (w.visible = true));
-  }
-
-  /** `home` = a free wire spot to come back to */
-  update(dt: number, time: number, rat: THREE.Vector3, pickSpot: () => { span: Span; u: number }): void {
-    const g = this.group;
-    if (this.state === 'perched') {
-      // idle bob
-      g.rotation.x = Math.sin(time * 3 + this.phase) * 0.04;
-      const dx = rat.x - g.position.x, dz = rat.z - g.position.z;
-      if (dx * dx + dz * dz < SCARE * SCARE && rat.y < g.position.y + 2) {
-        // scatter away from the rat, up and out
-        const d = Math.hypot(dx, dz) || 1;
-        const dist = 35 + Math.random() * 25;
-        this.state = 'away';
-        this.timer = 4 + Math.random() * 6;
-        this.launch(new THREE.Vector3(g.position.x - (dx / d) * dist + (Math.random() - 0.5) * 16, g.position.y + 10 + Math.random() * 8, g.position.z - (dz / d) * dist + (Math.random() - 0.5) * 16), 1.8 + Math.random() * 0.6, 2);
-      }
-    } else if (this.state === 'away') {
-      if (this.t < this.dur) this.fly(dt, time);
-      else {
-        // circle in place until it is time to come home
-        g.position.y += Math.sin(time * 2 + this.phase) * dt * 0.8;
-        this.flap(time, 0.5);
-        this.timer -= dt;
-        if (this.timer <= 0) {
-          const spot = pickSpot();
-          spanPoint(spot.span, spot.u, this.to);
-          this.to.y += 0.02;
-          this.span = spot.span;
-          this.u = spot.u;
-          this.state = 'flying';
-          this.launch(this.to, 2.4 + Math.random(), 1.5);
-        }
-      }
-    } else {
-      if (this.t < this.dur) this.fly(dt, time);
-      else this.perch(this.span, this.u);
-    }
-  }
-
-  private fly(dt: number, time: number): void {
-    const g = this.group;
-    this.t += dt;
-    const k = Math.min(1, this.t / this.dur);
-    const e = k * k * (3 - 2 * k);
-    const prev = g.position.clone();
-    g.position.lerpVectors(this.from, this.to, e);
-    g.position.y += Math.sin(k * Math.PI) * this.arc;
-    const vx = g.position.x - prev.x, vz = g.position.z - prev.z;
-    if (vx * vx + vz * vz > 1e-8) g.rotation.set(0, Math.atan2(vx, vz), 0);
-    this.flap(time, 1);
-  }
-
-  private flap(time: number, amp: number): void {
-    const a = Math.sin(time * 28 + this.phase) * 0.9 * amp;
-    this.wings[0].rotation.z = a;
-    this.wings[1].rotation.z = -a;
-  }
-}
-
 export interface PowerLines {
   group: THREE.Group;
-  update: (dt: number, time: number, rat: THREE.Vector3) => void;
+  /** spots on the wires a pigeon can sit */
+  perches: { x: number; y: number; z: number; yaw: number }[];
 }
 
 /**
- * Utility poles down the named streets, sagging wires between them, and pigeons sitting on the wires.
- * Pigeons scatter when the rat comes close and drift back to a free wire a few seconds later.
+ * Utility poles down the named streets and sagging wires between them (pigeons perch on them: see pigeons.ts).
  */
 export function buildPowerLines(opts: {
   streets: { pts: P2[]; half: number; name: string }[];
@@ -150,7 +37,6 @@ export function buildPowerLines(opts: {
   gradient: THREE.DataTexture;
   nearEdge: (x: number, z: number, m: number) => boolean;
   rand: () => number;
-  pigeons?: number;
 }): PowerLines {
   const { terrainAt, blocked, gradient, nearEdge, rand } = opts;
   const group = new THREE.Group();
@@ -194,7 +80,7 @@ export function buildPowerLines(opts: {
       carry -= L;
     }
   }
-  if (!poles.length) return { group, update: () => {} };
+  if (!poles.length) return { group, perches: [] };
 
   const poleGeo = new THREE.CylinderGeometry(0.14, 0.2, POLE_H, 6);
   poleGeo.translate(0, POLE_H / 2, 0);
@@ -229,42 +115,15 @@ export function buildPowerLines(opts: {
   wires.frustumCulled = false;
   group.add(wires);
 
-  // ---- pigeons ----
-  const grey = toon(0x8a8d99), dark = toon(0x4d5160), neck = toon(0x3f8f7a);
-  const part = (g: THREE.BufferGeometry, x: number, y: number, z: number) => g.translate(x, y, z);
-  const bodyG = part(new THREE.SphereGeometry(0.09, 7, 5).scale(1, 0.85, 1.5), 0, 0.12, 0);
-  const headG = part(new THREE.SphereGeometry(0.045, 6, 5), 0, 0.2, 0.12);
-  const tailG = part(new THREE.BoxGeometry(0.07, 0.015, 0.12), 0, 0.12, -0.17);
-  const beakG = part(new THREE.ConeGeometry(0.012, 0.04, 4).rotateX(Math.PI / 2), 0, 0.2, 0.18);
-  const body = new THREE.Mesh(mergeGeometries([bodyG, tailG])!, grey);
-  const head = new THREE.Mesh(mergeGeometries([headG])!, neck);
-  const beak = new THREE.Mesh(beakG, dark);
-  const bodyGroup = new THREE.Group();
-  bodyGroup.add(body, head, beak);
-  const wingGeo = new THREE.BoxGeometry(0.18, 0.012, 0.14).translate(0.09, 0, 0);
-
-  const pickSpot = () => {
-    const s = spans[Math.floor(rand() * spans.length)];
-    return { span: s, u: 0.12 + rand() * 0.76 };
-  };
-  const pigeons: Pigeon[] = [];
-  const count = Math.min(opts.pigeons ?? 120, spans.length * 2);
-  for (let i = 0; i < count; i++) {
-    const spot = pickSpot();
-    const p = new Pigeon(bodyGroup, wingGeo, dark, spot.span, spot.u);
-    group.add(p.group);
-    pigeons.push(p);
+  // ---- perches: a few spots along every wire ----
+  const perches: PowerLines['perches'] = [];
+  const v = new THREE.Vector3();
+  for (const sp of spans) {
+    const yaw = Math.atan2(sp.bx - sp.ax, sp.bz - sp.az);
+    for (let k = 0; k < 6; k++) {
+      spanPoint(sp, 0.1 + (k + rand()) * 0.13, v);
+      perches.push({ x: v.x, y: v.y + 0.02, z: v.z, yaw: yaw + (rand() < 0.5 ? Math.PI : 0) });
+    }
   }
-
-  return {
-    group,
-    update(dt, time, rat) {
-      for (const p of pigeons) {
-        const dx = p.group.position.x - rat.x, dz = p.group.position.z - rat.z;
-        const near = dx * dx + dz * dz < PIGEON_VIS * PIGEON_VIS;
-        p.group.visible = near;
-        if (near || p.state !== 'perched') p.update(dt, time, rat, pickSpot);
-      }
-    },
-  };
+  return { group, perches };
 }

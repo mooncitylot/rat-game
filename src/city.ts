@@ -9,6 +9,8 @@ import { buildLakeShoreDrive } from './lakeshore';
 import { buildSeawall, shoreEdges, SEAWALL_APRON, type ShoreRing } from './seawall';
 import { FacadeKit, loadStyled } from './facade';
 import { buildBackyardFences, type FenceLot } from './fences';
+import { buildRoofs, type RoofSpec } from './roofs';
+import { buildFlock, type Spot } from './pigeons';
 import { SHOP_NAMES } from './paint';
 import type { Box } from './physics';
 import { PolyNet } from './polynet';
@@ -825,6 +827,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   const buildingFootprints: P2[][] = [];
   const stoopSolids: { pts: [number, number][]; top: number }[] = [];
   const fenceLots: FenceLot[] = [];
+  const roofSpecs: RoofSpec[] = [];
 
   data.buildings.forEach((b, bi) => {
     const pts = rings[bi];
@@ -902,7 +905,10 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     });
     polys.push(makePoly(pts, r.roofY));
     buildingFootprints.push(pts);
-    if (!low) fenceLots.push({ pts, street, party });
+    if (!low) {
+      fenceLots.push({ pts, street, party });
+      roofSpecs.push({ pts, roofY: r.roofY, floors, shop: ground === 'shop' });
+    }
     pipes.push(...r.pipes);
     for (const sh of r.solids) stoopSolids.push(sh);
     for (const pp of r.pipes) {
@@ -956,6 +962,10 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     alley: (x, z) => segs.nearest(x, z, true)?.d ?? null,
     solid: (pts, top) => collider.addPoly(makePoly(pts, top)),
   }, gradient, rng(91573)));
+
+  // ---- rooftop gear: HVAC, vents, fans, cabinets, chimneys, water tanks ----
+  const roofs = buildRoofs(roofSpecs, { addBox: (b) => collider.addBox(b) }, gradient, rng(44711));
+  group.add(roofs.group);
 
   // ---- alley clutter + cat patrols ----
   const dumpMat = toon(0x2f6b4a);
@@ -1074,6 +1084,26 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
   }
   const powerLines = buildPowerLines({ streets: streetLines, terrainAt: (x, z) => terrain.at(x, z), blocked: inBuilding, addBox: (b) => collider.addBox(b), gradient, nearEdge, rand });
   group.add(powerLines.group);
+  // ---- pigeons: on the wires, the cornices, the rooftop gear and down on the sidewalks ----
+  const pigeonSpots: Spot[] = [...powerLines.perches, ...roofs.perches];
+  {
+    const pr = rng(7331);
+    for (const sl of slabs) {
+      along(sl.pts, 9, (x, z, tx, tz) => {
+        if (pr() > 0.35) return;
+        const o = (pr() - 0.5) * sl.half * 1.4;
+        const px = x - tz * o, pz = z + tx * o;
+        if (inBuilding(px, pz) || nearEdge(px, pz, 12)) return;
+        pigeonSpots.push({ x: px, y: terrain.at(px, pz) + 0.16, z: pz, yaw: pr() * Math.PI * 2, ground: true });
+      });
+    }
+    for (const [bx, bz] of data.benches) for (let k = 0; k < 3; k++) {
+      const px = bx + (pr() - 0.5) * 3, pz = bz + (pr() - 0.5) * 3;
+      if (!inBuilding(px, pz)) pigeonSpots.push({ x: px, y: terrain.at(px, pz) + collider.slab(px, pz), z: pz, yaw: pr() * 6.28, ground: true });
+    }
+  }
+  const flock = buildFlock(pigeonSpots, 10000, gradient, rng(1213));
+  group.add(flock.group);
   {
     const covers = manholes.filter((m) => m[3] === 0), drains = manholes.filter((m) => m[3] === 1);
     const flatMat = (c: number) => {
@@ -1679,7 +1709,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
     catRoutes: catRoutes.sort(() => rand() - 0.5).slice(0, 4),
     beacon,
     signals,
-    powerLines,
+    powerLines: flock,
     plants: { update: (t: number) => { windUniform.value = t; } },
     size: { w: B.x1 - B.x0, d: B.z1 - B.z0 },
     osmCredit: data.osmCopyright,
