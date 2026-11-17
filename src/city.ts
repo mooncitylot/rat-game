@@ -1578,7 +1578,7 @@ export function buildCity(data: CityData, gradient: THREE.DataTexture, opts: { e
           return { name: forests.length > 1 ? `Forest ${i + 1}` : 'Forest', x: cx, z: cz };
         }),
         ...(lake.shoreX !== null ? [{ name: 'Lake Michigan', x: lake.shoreX - 14, z: 0 }] : []),
-        { name: 'Devon Ave', x: 0, z: B.z0 + 50 },
+        { name: 'Lawrence Ave', x: 0, z: B.z0 + 50 },
         { name: 'South end', x: 0, z: ext * 0.8 },
         { name: 'West end', x: -ext * 0.8, z: 0 },
       ],

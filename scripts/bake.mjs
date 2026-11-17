@@ -1,6 +1,6 @@
 // Bakes a real place into public/city/<name>.json from OpenStreetMap (Overpass) + Mapzen/AWS terrarium elevation tiles.
 //   node scripts/bake.mjs wrigleyville 41.9484 -87.6553 600 [eastMetres] [northMetres]
-// northMetres (real metres from the centre) stretches the north edge out (Devon Ave is ~5620 m north of Wrigley).
+// northMetres (real metres from the centre) stretches the north edge out (Lawrence Ave is ~2274 m north of Wrigley; Uptown bake uses 2300).
 // Big areas are queried in horizontal bands and merged. OVERPASS=<url> overrides the endpoint list.
 // size = side of the square around the centre; eastMetres (real metres) stretches the east edge out to the lake.
 // Raw responses are cached in data/ so re-bakes don't hit the APIs again.
