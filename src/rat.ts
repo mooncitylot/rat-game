@@ -109,12 +109,6 @@ export class Rat {
       eye.position.set(s * 0.1, 0.36, 0.62);
     }
 
-    // contestant sash: a red band slung round the shoulders
-    const sash = add(new THREE.TorusGeometry(1, 0.07, 5, 28), toon(0xd8243c));
-    sash.scale.set(0.285, 0.272, 0.7);
-    sash.position.set(0, 0.29, 0.12);
-    sash.rotation.set(0.35, 0, 0.5);
-
     // the crown: hidden until the rat wins
     const gold = toon(0xffcf40);
     this.tiara.position.set(0, 0.46, 0.48);

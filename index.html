@@ -53,8 +53,10 @@
   #map.on { display: grid; }
   #map .mp { background: #efe6d2; color: #14121c; padding: 14px; border: 3px solid #14121c; box-shadow: 6px 6px 0 #14121c; max-width: 96vw; }
   #map .mt { font-weight: bold; letter-spacing: .15em; margin-bottom: 8px; } #map .mt span { font-weight: normal; opacity: .6; letter-spacing: 0; margin-left: 10px; font-size: 12px; }
-  #map canvas { display: block; width: min(1200px, 90vw); height: auto; cursor: crosshair; border: 2px solid #14121c; }
-  #map .mpl { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: min(1200px, 90vw); }
+  /* the map fits the screen both ways: as wide as it can be without its height (map aspect --ar = width/height) overflowing */
+  #map { --mw: min(1200px, 90vw, calc((100dvh - 170px) * var(--ar, 1.6))); }
+  #map canvas { display: block; width: var(--mw); height: auto; cursor: crosshair; border: 2px solid #14121c; }
+  #map .mpl { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: var(--mw); }
   #map button { font: inherit; font-size: 12px; padding: 4px 8px; background: #fbf7ea; border: 2px solid #14121c; cursor: pointer; } #map button:hover { background: #ffd966; }
 </style>
 </head>
@@ -73,7 +75,7 @@
 <div id="toast"></div>
 <div id="credit"></div>
 <div id="flash"></div>
-<div id="help">WASD move · SHIFT sprint · SPACE jump (hold to fly: spin tail like a helicopter) · run into a PIPE to climb (W/S, SPACE to leap off) · deliver cheese to the green manhole<br>MOUSE look (click to capture) · Q/E turn camera · M map · N skip 1 hour · R toggle rain · ` stats · gamepad supported</div>
+<div id="help">WASD move · SHIFT sprint · SPACE jump (hold to fly: spin tail like a helicopter) · run into a PIPE to climb (W/S, SPACE to leap off) · deliver cheese to the green manhole<br>MOUSE look (click to capture) · Q/E turn camera · M map · N skip 1 hour · ` stats · gamepad supported</div>
 <div id="start" class="loading"><div><h1>America's Next Top Rat</h1><p class="go">click to play</p><p class="wait">loading the city…</p><div class="bar"><i></i></div></div></div>
 <script type="module" src="/src/main.ts"></script>
 </body>

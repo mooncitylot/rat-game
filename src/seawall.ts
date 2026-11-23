@@ -1,21 +1,25 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { inPoly, makePoly, type Poly } from './citycollider';
 
 type P2 = [number, number];
 
-/** a closed shoreline: the lake gets Chicago's stepped limestone revetment, harbours get a vertical concrete wall */
+/** a closed shoreline (one river basin between two bridges): it gets a vertical concrete quay */
 export interface ShoreRing {
   pts: P2[];
-  kind: 'lake' | 'harbor';
+  kind: 'harbor';
 }
 
 export interface SeawallCtx {
   group: THREE.Group;
   gradient: THREE.DataTexture;
   terrainAt: (x: number, z: number) => number;
-  floorY: number; // lake bed
+  floorY: number; // river bed
   waterY: number; // water surface
-  topY: number; // the promenade
+  topY: number; // the bank
+  wallTop: number; // the invisible wall that keeps the rat out of the water
+  /** does this stretch of quay get a railing? (not the ends cut under the bridges) */
+  railed: (a: P2, b: P2) => boolean;
   rings: ShoreRing[];
   /** the ring edge is artificial (it runs along the edge of the baked map) */
   isBorder: (a: P2, b: P2) => boolean;
@@ -24,34 +28,17 @@ export interface SeawallCtx {
   rand: () => number;
 }
 
-/** how far the stepped treads reach out into the water, and how wide the concrete apron is behind them */
-export const SEAWALL_STEPS = 4; // treads, one metre each
-export const SEAWALL_APRON = 4; // metres of concrete behind the top step
-
 const LIME = [0xdad3bd, 0xd0c8af, 0xe1dac6, 0xc9c1a8, 0xd6cdb2];
 const CONC = [0xbdbab0, 0xb3b0a5, 0xc4c1b7];
+const APRON = 3; // metres of concrete behind the coping
 
 const shade = (hex: number, k: number) => {
   const c = new THREE.Color(hex);
   return c.multiplyScalar(k);
 };
 
-/**
- * Distance helpers shared by the terrain carve and the mesh: the polyline edges of each ring that are real shoreline.
- */
-export function shoreEdges(rings: ShoreRing[], isBorder: (a: P2, b: P2) => boolean): { ax: number; az: number; bx: number; bz: number; ring: number }[] {
-  const out: { ax: number; az: number; bx: number; bz: number; ring: number }[] = [];
-  rings.forEach((r, ri) => {
-    for (let i = 0; i < r.pts.length; i++) {
-      const a = r.pts[i], b = r.pts[(i + 1) % r.pts.length];
-      if (!isBorder(a, b)) out.push({ ax: a[0], az: a[1], bx: b[0], bz: b[1], ring: ri });
-    }
-  });
-  return out;
-}
-
 export function buildSeawall(ctx: SeawallCtx): void {
-  const { group, terrainAt, floorY, waterY, topY } = ctx;
+  const { group, terrainAt, floorY, topY } = ctx;
   const pos: number[] = [], col: number[] = [];
   const tri = (a: number[], b: number[], c: number[], color: THREE.Color) => {
     for (const p of [a, b, c]) {
@@ -64,7 +51,7 @@ export function buildSeawall(ctx: SeawallCtx): void {
     tri(a, c, d, color);
   };
   const bollards: THREE.BufferGeometry[] = [];
-  const treadBase = floorY + 0.05, treadTop = topY - 0.11;
+  const rails: THREE.BufferGeometry[] = [];
 
   ctx.rings.forEach((ring) => {
     const n = ring.pts.length;
@@ -119,49 +106,38 @@ export function buildSeawall(ctx: SeawallCtx): void {
         const j = i + 1;
         const tone = LIME[(i * 7 + (ring.kind === 'harbor' ? 3 : 0)) % LIME.length];
         const concrete = CONC[(i * 5) % CONC.length];
-        if (ring.kind === 'lake') {
-          // stepped limestone: SEAWALL_STEPS treads, each 1 m wide and a little higher than the last
-          let prevH = treadBase - 0.45;
-          for (let t = 0; t < SEAWALL_STEPS; t++) {
-            const s0 = -SEAWALL_STEPS + t, s1 = s0 + 1;
-            const planned = treadBase + ((treadTop - treadBase) * t) / (SEAWALL_STEPS - 1);
-            const h = Math.max(planned, (ground(i, s0 + 0.5) + ground(j, s0 + 0.5)) / 2 + 0.03);
-            const tc = shade(tone, 0.96 + t * 0.02);
-            quad(at(i, s0, h), at(i, s1, h), at(j, s1, h), at(j, s0, h), tc); // tread
-            quad(at(i, s0, prevH), at(i, s0, h), at(j, s0, h), at(j, s0, prevH), shade(tone, 0.8)); // riser, facing the water
-            prevH = h;
-          }
-          // top riser up to the apron
-          const apronY = (a: number, b: number) => Math.max(topY, (ground(a, 1) + ground(b, 1)) / 2) + 0.02;
-          const ay = apronY(i, j);
-          quad(at(i, 0, prevH), at(i, 0, ay), at(j, 0, ay), at(j, 0, prevH), shade(tone, 0.78));
-          quad(at(i, 0, ay), at(i, SEAWALL_APRON, ay), at(j, SEAWALL_APRON, ay), at(j, 0, ay), shade(concrete, 1));
-          quad(at(i, SEAWALL_APRON, ay), at(i, SEAWALL_APRON, ay - 0.7), at(j, SEAWALL_APRON, ay - 0.7), at(j, SEAWALL_APRON, ay), shade(concrete, 0.8)); // inland lip
-        } else {
-          // harbour: a plain vertical concrete face with a coping stone, and an apron behind it
-          const ay = Math.max(topY, (ground(i, 1) + ground(j, 1)) / 2) + 0.02;
-          quad(at(i, 0, floorY - 0.3), at(i, 0, ay), at(j, 0, ay), at(j, 0, floorY - 0.3), shade(concrete, 0.82));
-          quad(at(i, 0, ay), at(i, 0.5, ay + 0.1), at(j, 0.5, ay + 0.1), at(j, 0, ay), shade(tone, 1));
-          quad(at(i, 0.5, ay + 0.1), at(i, SEAWALL_APRON * 0.75, ay), at(j, SEAWALL_APRON * 0.75, ay), at(j, 0.5, ay + 0.1), shade(concrete, 1));
-          quad(at(i, SEAWALL_APRON * 0.75, ay), at(i, SEAWALL_APRON * 0.75, ay - 0.7), at(j, SEAWALL_APRON * 0.75, ay - 0.7), at(j, SEAWALL_APRON * 0.75, ay), shade(concrete, 0.8));
-          // mooring bollards along the quay
-          if (i % 4 === 1) {
-            const b = new THREE.CylinderGeometry(0.11, 0.14, 0.42, 8).toNonIndexed();
-            b.deleteAttribute('uv');
-            b.translate(S[i].x + N[i][0] * 0.9, ay + 0.2, S[i].z + N[i][1] * 0.9);
-            const c = new THREE.Color(0x2b2f33);
-            b.setAttribute('color', new THREE.BufferAttribute(Float32Array.from({ length: b.getAttribute('position').count * 3 }, (_, k) => [c.r, c.g, c.b][k % 3]), 3));
-            bollards.push(b);
-          }
+        // a plain vertical concrete face with a coping stone, and an apron behind it
+        const ay = Math.max(topY, (ground(i, 1) + ground(j, 1)) / 2) + 0.02;
+        quad(at(i, 0, floorY - 0.3), at(i, 0, ay), at(j, 0, ay), at(j, 0, floorY - 0.3), shade(concrete, 0.82));
+        quad(at(i, 0, ay), at(i, 0.5, ay + 0.1), at(j, 0.5, ay + 0.1), at(j, 0, ay), shade(tone, 1));
+        quad(at(i, 0.5, ay + 0.1), at(i, APRON, ay), at(j, APRON, ay), at(j, 0.5, ay + 0.1), shade(concrete, 1));
+        quad(at(i, APRON, ay), at(i, APRON, ay - 0.7), at(j, APRON, ay - 0.7), at(j, APRON, ay), shade(concrete, 0.8));
+        const a2: P2 = [S[i].x, S[i].z], b2: P2 = [S[j].x, S[j].z];
+        if (ctx.railed(a2, b2)) {
+          // an iron railing on the coping: a post every block, a top rail and a mid rail
+          const p0 = at(i, 0.3, 0), p1 = at(j, 0.3, 0);
+          const len = Math.hypot(p1[0] - p0[0], p1[2] - p0[2]);
+          const yaw = Math.atan2(p1[0] - p0[0], p1[2] - p0[2]);
+          const mx = (p0[0] + p1[0]) / 2, mz = (p0[2] + p1[2]) / 2;
+          for (const [h, t] of [[1.05, 0.07], [0.55, 0.04]]) rails.push(new THREE.BoxGeometry(t, t, len + 0.05).rotateY(yaw).translate(mx, ay + 0.1 + h, mz).toNonIndexed());
+          rails.push(new THREE.BoxGeometry(0.07, 1.05, 0.07).translate(p0[0], ay + 0.1 + 0.52, p0[2]).toNonIndexed());
+        } else if (i % 4 === 1) {
+          // mooring bollards along the unrailed stretches
+          const b = new THREE.CylinderGeometry(0.11, 0.14, 0.42, 8).toNonIndexed();
+          b.deleteAttribute('uv');
+          b.translate(S[i].x + N[i][0] * 0.9, ay + 0.2, S[i].z + N[i][1] * 0.9);
+          const c = new THREE.Color(0x2b2f33);
+          b.setAttribute('color', new THREE.BufferAttribute(Float32Array.from({ length: b.getAttribute('position').count * 3 }, (_, k) => [c.r, c.g, c.b][k % 3]), 3));
+          bollards.push(b);
         }
       }
 
       // the rat can't wade onto the stones: wall the steps off like the water itself
-      const wall = ring.kind === 'lake' ? -SEAWALL_STEPS - 0.2 : -0.3;
+      const wall = -0.3;
       for (let i = 0; i + 1 < S.length; i++) {
         const j = i + 1;
         const pts: P2[] = [[at(i, wall, 0)[0], at(i, wall, 0)[2]], [at(j, wall, 0)[0], at(j, wall, 0)[2]], [at(j, 0.15, 0)[0], at(j, 0.15, 0)[2]], [at(i, 0.15, 0)[0], at(i, 0.15, 0)[2]]];
-        ctx.addPoly(makePoly(ctx.windCCW(pts), waterY + 2.2));
+        ctx.addPoly(makePoly(ctx.windCCW(pts), ctx.wallTop));
       }
     }
   });
@@ -178,6 +154,14 @@ export function buildSeawall(ctx: SeawallCtx): void {
     const mesh = new THREE.Mesh(g, mat);
     mesh.receiveShadow = true;
     group.add(mesh);
+  }
+  if (rails.length) {
+    const g = mergeGeometries(rails.map((r) => { r.deleteAttribute('uv'); return r; }), false);
+    if (g) {
+      const mesh = new THREE.Mesh(g, new THREE.MeshToonMaterial({ color: 0x23262b, gradientMap: ctx.gradient }));
+      mesh.castShadow = true;
+      group.add(mesh);
+    }
   }
   if (bollards.length) {
     const merged = mergeAll(bollards);

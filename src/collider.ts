@@ -35,6 +35,7 @@ export class BoxCollider implements Collider {
   solidAt(x: number, y: number, z: number, margin: number): boolean {
     if (y < 0.12) return true;
     for (const b of this.boxes) {
+      if (b.bottom !== undefined && y < b.bottom - margin) continue;
       if (y < b.top + margin && x > b.minX - margin && x < b.maxX + margin && z > b.minZ - margin && z < b.maxZ + margin) return true;
     }
     return false;

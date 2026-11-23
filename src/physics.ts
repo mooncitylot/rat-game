@@ -1,19 +1,28 @@
 import type * as THREE from 'three';
 
-/** Axis-aligned collision box. `top` is the walkable surface height; boxes always start at y=0. */
+/**
+ * Axis-aligned collision box. `top` is the walkable surface height. Boxes start at the ground unless they have a
+ * `bottom`: then they float (a ceiling, a canopy) and anything standing well below it passes underneath.
+ */
 export interface Box {
   minX: number;
   maxX: number;
   minZ: number;
   maxZ: number;
   top: number;
+  bottom?: number;
 }
+
+/** how tall a character counts as when ducking under a floating box */
+export const HEADROOM = 0.6;
+/** is a character standing at height y clear underneath this box? */
+export const under = (b: Box, y: number): boolean => b.bottom !== undefined && y + HEADROOM < b.bottom;
 
 /** Push a circle (centre = pos.xz) out of every box taller than `pos.y + step`. */
 export function pushOut(pos: THREE.Vector3, r: number, boxes: Box[], step: number): void {
   for (let iter = 0; iter < 2; iter++) {
     for (const b of boxes) {
-      if (b.top <= pos.y + step) continue;
+      if (b.top <= pos.y + step || under(b, pos.y)) continue;
       const cx = Math.max(b.minX, Math.min(pos.x, b.maxX));
       const cz = Math.max(b.minZ, Math.min(pos.z, b.maxZ));
       let dx = pos.x - cx;
@@ -57,6 +66,7 @@ export function blocked(ax: number, az: number, bx: number, bz: number, boxes: B
     const x = ax + ((bx - ax) * i) / N;
     const z = az + ((bz - az) * i) / N;
     for (const b of boxes) {
+      if (b.bottom !== undefined) continue; // ceilings and canopies don't block a line of sight along the ground
       if (b.top > minTop && x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) return true;
     }
   }

@@ -22,6 +22,7 @@ export class MapView {
     this.H = Math.round((this.W * (b.z1 - b.z0)) / (b.x1 - b.x0)); // keep the real aspect ratio
     this.cv.width = this.base.width = this.W;
     this.cv.height = this.base.height = this.H;
+    this.el.style.setProperty('--ar', String(this.W / this.H)); // the CSS sizes the canvas to fit the screen with this
     const list = this.el.querySelector('.mpl')!;
     for (const p of map.places) {
       const b = document.createElement('button');

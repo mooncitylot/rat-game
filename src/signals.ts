@@ -61,11 +61,11 @@ export class TrafficSignals {
 
   /**
    * A signal pole at a block corner. (ox, oz) point from the corner toward the two streets it borders;
-   * one head faces each street's approaching traffic.
+   * one head faces each street's approaching traffic. `y` is the ground height at the foot of the pole.
    */
-  addPole(x: number, z: number, ox: number, oz: number): void {
+  addPole(x: number, z: number, ox: number, oz: number, y = 0): void {
     const T = (px: number, py: number, pz: number, ry = 0) =>
-      new THREE.Matrix4().compose(new THREE.Vector3(px, py, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(1, 1, 1));
+      new THREE.Matrix4().compose(new THREE.Vector3(px, py + y, pz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(1, 1, 1));
 
     this.add(this.metal, new THREE.CylinderGeometry(0.09, 0.11, 5.2, 8), T(x, 2.62, z));
     this.add(this.metal, new THREE.CylinderGeometry(0.18, 0.2, 0.3, 8), T(x, 0.37, z)); // base
@@ -88,9 +88,9 @@ export class TrafficSignals {
       const reach = 3.4, ay = 5.0;
       const ax = x + h.fx * reach, az = z + h.fz * reach;
       const curve = new THREE.QuadraticBezierCurve3(
-        new THREE.Vector3(x, ay - 0.5, z),
-        new THREE.Vector3(x + h.fx * 0.2, ay + 0.35, z + h.fz * 0.2),
-        new THREE.Vector3(ax, ay + 0.1, az),
+        new THREE.Vector3(x, y + ay - 0.5, z),
+        new THREE.Vector3(x + h.fx * 0.2, y + ay + 0.35, z + h.fz * 0.2),
+        new THREE.Vector3(ax, y + ay + 0.1, az),
       );
       this.add(this.metal, new THREE.TubeGeometry(curve, 10, 0.06, 6, false), new THREE.Matrix4());
       this.add(this.metal, new THREE.BoxGeometry(0.06, 0.4, 0.06), T(ax, ay - 0.1, az)); // hanger

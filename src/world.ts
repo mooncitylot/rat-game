@@ -61,13 +61,17 @@ export interface World {
   };
   carRoads?: { pts: [number, number][]; w: number; oneway: boolean }[]; // drivable streets
   terrainAt?: (x: number, z: number) => number;
-  carHeightAt?: (x: number, z: number) => number; // road surface for traffic: the ground, or an elevated deck / ramp
+  carHeightAt?: (x: number, z: number) => number; // road surface for traffic
+  railGroundAt?: (x: number, z: number) => number; // what the elevated tracks stand on (ignores the river channel)
+  stations?: { p: [number, number]; name: string }[]; // the elevated loop's stops
   streetAt?: (x: number, z: number) => string | null; // full OSM name of the street (or its sidewalk) at a point
   catRoutes: THREE.Vector2[][]; // alley patrols
   beacon: THREE.Object3D;
   signals: TrafficSignals;
   powerLines?: { update: (dt: number, time: number, rat: THREE.Vector3) => void };
   plants?: { update: (t: number) => void };
+  /** automatic doors: open for anyone near; returns the watcher's distance to a door that just started opening */
+  doors?: { update: (dt: number, who: THREE.Vector3[]) => number };
   size: { w: number; d: number };
 }
 

@@ -1,7 +1,6 @@
 /** Tiny synth sound: no asset files. Browsers need a user gesture first, so call init() from a click. */
 export class Sfx {
   private ctx: AudioContext | null = null;
-  private rainGain: GainNode | null = null;
   private master: GainNode | null = null;
 
   init(): void {
@@ -15,21 +14,10 @@ export class Sfx {
     this.master.gain.value = 0.5;
     this.master.connect(ctx.destination);
 
-    // rain bed: looped noise through a band-pass
+    // a couple of seconds of white noise, shared by the beds and bursts below
     const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 1800;
-    bp.Q.value = 0.5;
-    this.rainGain = ctx.createGain();
-    this.rainGain.gain.value = 0;
-    src.connect(bp).connect(this.rainGain).connect(this.master);
-    src.start();
     this.noise = buf;
 
     // city bed: the same noise, low-passed into a distant traffic rumble
@@ -84,10 +72,6 @@ export class Sfx {
   private windGain: GainNode | null = null;
   private trainGain: GainNode | null = null;
 
-  setRain(level: number): void {
-    if (this.rainGain && this.ctx) this.rainGain.gain.setTargetAtTime(level * 0.22, this.ctx.currentTime, 0.4);
-  }
-
   /** 0 = sleepy small hours, 1 = rush hour */
   setCity(busy: number): void {
     if (this.cityGain && this.ctx) this.cityGain.gain.setTargetAtTime(0.02 + busy * 0.06, this.ctx.currentTime, 1);
@@ -121,7 +105,14 @@ export class Sfx {
     src.start(t, Math.random() * 1.5, dur + 0.05);
   }
 
-  footstep(wet: number): void { this.burst(wet > 0.3 ? 900 : 2600, 2, 0.04, 0.05 + wet * 0.04); }
+  footstep(): void { this.burst(2600, 2, 0.04, 0.05); }
+  /** an automatic door's motor and the soft rush of its leaves, quieter with distance */
+  doorSlide(dist: number): void {
+    const v = 0.12 * Math.max(0, 1 - dist / 14);
+    if (v <= 0.005) return;
+    this.burst(900, 0.8, 0.7, v, 0, 400);
+    this.tone('sine', 140, 120, 0.6, v * 0.5);
+  }
   whoosh(): void { this.burst(300, 1.2, 0.45, 0.35, 0, 2400); }
   /** the judges' bell, then the crowd */
   applause(score: number): void {
@@ -159,5 +150,4 @@ export class Sfx {
   hurt(): void { this.tone('sawtooth', 220, 50, 0.35, 0.3); this.tone('square', 1800, 600, 0.12, 0.12); }
   hiss(): void { this.tone('sawtooth', 700, 300, 0.25, 0.1); }
   stomp(): void { this.tone('sine', 120, 30, 0.3, 0.5); }
-  thunder(): void { this.tone('sawtooth', 70, 25, 1.6, 0.35); }
 }

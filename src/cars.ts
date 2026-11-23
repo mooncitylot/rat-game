@@ -523,3 +523,38 @@ export class Fleet {
     return out;
   }
 }
+
+/**
+ * Parked cars (store lots, the gas pumps): the same body as the traffic, as static instanced meshes.
+ * Each spot is the car's centre on the ground and its heading (the car's nose points along +z rotated by yaw).
+ */
+export function parkedCars(spots: { x: number; y: number; z: number; yaw: number }[], gradient: THREE.DataTexture, seed = 1): THREE.Group {
+  const group = new THREE.Group();
+  if (!spots.length) return group;
+  if (!shared) shared = makeShared(gradient);
+  const k = shared;
+  const W = WID / 2;
+  const wheels = (g: THREE.BufferGeometry, off: number) => mergeAt([-1, 1].flatMap((sx) => [1.4, -1.35].map((z) => [g, sx * (W + off), 0.34, z] as [THREE.BufferGeometry, number, number, number])));
+  const parts: [THREE.BufferGeometry, THREE.Material, boolean][] = [
+    [mergeAt([[k.lower, 0, 0, 0], [k.roof, 0, 0, 0], [k.mirror, -(W + 0.1), 1.0, 0.75], [k.mirror, W + 0.1, 1.0, 0.75]]), new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient }), true],
+    [k.glassG, k.glass, true],
+    [mergeAt([[k.bumper, 0, 0.42, LEN / 2 + 0.02], [k.bumper, 0, 0.42, -LEN / 2 - 0.02]]), k.trim, false],
+    [wheels(k.wheel, -0.02), k.tire, true],
+    [wheels(k.hub, 0.01), k.hubM, false],
+  ];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1), c = new THREE.Color();
+  parts.forEach(([g, mat, shadow], pi) => {
+    const im = new THREE.InstancedMesh(g, mat, spots.length);
+    spots.forEach((s, i) => {
+      im.setMatrixAt(i, m.compose(new THREE.Vector3(s.x, s.y, s.z), q.setFromAxisAngle(up, s.yaw), one));
+      if (pi === 0) im.setColorAt(i, c.setHex(COLORS[(i * 7 + seed) % COLORS.length]));
+    });
+    im.castShadow = shadow;
+    im.receiveShadow = true;
+    group.add(im);
+  });
+  return group;
+}
+
+/** the footprint a parked car blocks, for the collider */
+export const PARKED_SIZE = { len: LEN, wid: WID, top: 1.6 };

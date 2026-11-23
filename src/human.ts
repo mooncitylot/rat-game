@@ -123,7 +123,6 @@ export const HAIR = [0x16110e, 0x2c1b12, 0x4a3022, 0x7a5232, 0xb98b4d, 0xd6c28a,
 export const JACKET = [0x8a2f3a, 0x2f4a7a, 0x3a6a4a, 0xb08a3a, 0x5a3a7a, 0x3a3f4a, 0x9a5a2a, 0x2a6a6a, 0xd24a2e, 0xe0c24a, 0x4a4a52, 0xe8e2d0, 0x1c1c22];
 export const PANTS = [0x2a3550, 0x1c1c22, 0x4a4a52, 0x8a7a5a, 0x3a4a6a, 0x5a3a2a, 0x6a6a72];
 const SHOES = [0x17151a, 0xf2eee0, 0x4a2a1a, 0xc8321f, 0x2a3550];
-export const UMBRELLA = [0xe8452e, 0x2f4a7a, 0xf2c230, 0x1c1c22, 0x3f8a5a, 0xd94f8a, 0xe8e2d0];
 
 const geos = new Map<string, THREE.BufferGeometry>();
 const mats = new Map<string, THREE.MeshToonMaterial>();
@@ -177,8 +176,6 @@ export class Human {
   private ring: THREE.Mesh;
 
   // look
-  private hasUmbrella: boolean;
-  private umbrella = new THREE.Group();
   private phone: THREE.Mesh;
   private stepLen: number;
 
@@ -230,7 +227,6 @@ export class Human {
     this.pace = 1.45 + r() * 0.8;
     this.stepLen = 0.8 * build;
     this.timid = r() < 0.35;
-    this.hasUmbrella = r() < 0.6;
     const hairStyle = pick(['short', 'short', 'long', 'bun', 'bald', 'curly'] as const);
     const hat = pick(['none', 'none', 'none', 'beanie', 'cap'] as const);
 
@@ -322,13 +318,6 @@ export class Human {
       part(geo('bag', () => new THREE.BoxGeometry(0.06, 0.2, 0.28)), toon(pick(JACKET)), this.torso, 0.3 * girth, 0.02, 0.0);
     }
 
-    // umbrella: pole + canopy, carried in the right hand (arm is posed to match when it is up)
-    const umbM = toon(pick(UMBRELLA));
-    part(geo('umbPole', () => new THREE.CylinderGeometry(0.012, 0.012, 0.9, 6)), toon(0x1c1c22), this.umbrella, 0, 0.45, 0);
-    part(geo('umbTop', () => new THREE.ConeGeometry(0.58, 0.22, 10)), umbM, this.umbrella, 0, 0.93, 0);
-    this.umbrella.position.set(0.24 * girth, 0.26, 0.34);
-    this.umbrella.visible = false;
-    this.torso.add(this.umbrella);
 
     // phone
     this.phone = part(geo('phone', () => new THREE.BoxGeometry(0.05, 0.1, 0.01)), new THREE.MeshBasicMaterial({ color: 0xcfe8ff }), this.elbow[1], 0, -0.3, 0.04);
@@ -421,15 +410,11 @@ export class Human {
   // ------------------------------------------------------------------------------------------------
 
   /** Returns true on the frame a stomp lands on the rat. */
-  update(dt: number, rat: Rat, t: number, env: { rain: number }): boolean {
+  update(dt: number, rat: Rat, t: number): boolean {
     if (!this.active) return false;
     this.time += dt;
     this.cooldown = Math.max(0, this.cooldown - dt);
     let stomped = false;
-
-    // umbrellas come out in the rain
-    const up = this.hasUmbrella && env.rain > 0.35;
-    if (up !== this.umbrella.visible) this.umbrella.visible = up;
 
     const dx = rat.pos.x - this.pos.x, dz = rat.pos.z - this.pos.z;
     const dist = Math.hypot(dx, dz);
@@ -553,7 +538,6 @@ export class Human {
     const a = THREE.MathUtils.clamp(this.speed / 1.9, 0, 1.3); // walk amplitude
     const w = this.phase;
     const tt = this.time;
-    const umb = this.umbrella.visible;
 
     // ----- legs -----
     for (let i = 0; i < 2; i++) {
@@ -583,22 +567,15 @@ export class Human {
     this.phone.visible = false;
 
     // ----- states -----
-    if (umb && this.state !== 'windup' && this.state !== 'recover') {
-      // right arm holds the umbrella up in front
-      this.arm[1].rotation.set(-0.35, 0, -0.05);
-      this.elbow[1].rotation.set(-1.3, 0, 0);
-    }
     switch (this.state) {
       case 'pause':
         if (this.pauseKind === 'phone') {
           this.head.rotation.set(0.5, Math.sin(tt * 0.4) * 0.1, 0);
           this.arm[0].rotation.set(-0.7, 0, 0);
           this.elbow[0].rotation.set(-1.25, 0, 0);
-          if (!umb) {
-            this.arm[1].rotation.set(-0.7, 0, 0);
-            this.elbow[1].rotation.set(-1.25, 0, 0);
-            this.phone.visible = true;
-          }
+          this.arm[1].rotation.set(-0.7, 0, 0);
+          this.elbow[1].rotation.set(-1.25, 0, 0);
+          this.phone.visible = true;
           this.torso.rotation.x = 0.1;
         } else if (this.pauseKind === 'look') {
           this.head.rotation.set(0.04, Math.sin(tt * 0.7) * 0.5, 0);

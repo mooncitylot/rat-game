@@ -200,6 +200,7 @@ export class CityCollider implements Collider {
       }
     }
     for (const b of this.nearBoxes(x, z)) {
+      if (b.bottom !== undefined && y < b.bottom - margin) continue;
       if (y < b.top + margin && x > b.minX - margin && x < b.maxX + margin && z > b.minZ - margin && z < b.maxZ + margin) return true;
     }
     return false;

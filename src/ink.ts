@@ -109,7 +109,7 @@ export class InkPipeline {
   private normalMat = new THREE.MeshNormalMaterial();
   private mat: THREE.ShaderMaterial;
   private size = new THREE.Vector2();
-  /** objects drawn in colour only (rain, light beams): kept out of the normal pass so they don't get inked */
+  /** objects drawn in colour only (the sky, light beams): kept out of the normal pass so they don't get inked */
   readonly hide: THREE.Object3D[] = [];
 
   constructor(private renderer: THREE.WebGLRenderer) {

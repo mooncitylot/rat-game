@@ -8,23 +8,29 @@ const TRAIN_LEN = CARS * (CAR_LEN + CAR_GAP);
 const DECK = 10.15; // the elevated deck's top sits 10 m over the terrain; wheels rest on it
 const CRUISE = 17, ACCEL = 1.5, BRAKE = 1.7, DWELL = 11;
 
-/** one stretch of elevated track, resampled, with straight run-outs past both ends so trains can slide off-map */
+/**
+ * One elevated track, resampled every 2 m. A closed loop (first point = last) wraps around; an open line gets
+ * straight run-outs past both ends so trains can slide off-map.
+ */
 class Track {
   readonly p: THREE.Vector2[] = [];
   readonly cum: number[] = [0];
   readonly len: number;
-  stopS = 0; // where the head of a stopping train halts
+  readonly closed: boolean;
+  /** where the head of a stopping train halts, one per station */
+  stops: { s: number; name: string }[] = [];
   platformSide = 1;
 
   constructor(pts: P2[]) {
-    const pad = 220;
+    this.closed = pts.length > 3 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 1;
+    const pad = this.closed ? 0 : 220;
     const first = pts[0], second = pts[1], last = pts[pts.length - 1], prev = pts[pts.length - 2];
     const norm = (a: P2, b: P2): P2 => {
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
       return [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
     };
     const d0 = norm(second, first), d1 = norm(prev, last);
-    const ext: P2[] = [[first[0] + d0[0] * pad, first[1] + d0[1] * pad], ...pts, [last[0] + d1[0] * pad, last[1] + d1[1] * pad]];
+    const ext: P2[] = this.closed ? pts : [[first[0] + d0[0] * pad, first[1] + d0[1] * pad], ...pts, [last[0] + d1[0] * pad, last[1] + d1[1] * pad]];
     // resample every 2 m
     for (let i = 0; i + 1 < ext.length; i++) {
       const a = ext[i], b = ext[i + 1];
@@ -38,7 +44,7 @@ class Track {
 
   /** position and unit tangent at arc length s (clamped) */
   at(s: number, out: { x: number; z: number; tx: number; tz: number }): void {
-    s = THREE.MathUtils.clamp(s, 0, this.len - 1e-3);
+    s = this.closed ? this.wrap(s) : THREE.MathUtils.clamp(s, 0, this.len - 1e-3);
     let lo = 0, hi = this.cum.length - 1;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
@@ -52,6 +58,18 @@ class Track {
     out.z = a.y + (b.y - a.y) * t;
     out.tx = (b.x - a.x) / seg;
     out.tz = (b.y - a.y) / seg;
+  }
+
+  /** arc length folded into 0..len (closed loops) */
+  wrap(s: number): number {
+    return ((s % this.len) + this.len) % this.len;
+  }
+
+  /** how far ahead (along the direction of travel) `to` is from `from`; on a loop, slightly behind reads as negative */
+  ahead(from: number, to: number): number {
+    if (!this.closed) return to - from;
+    const d = this.wrap(to - from);
+    return d > this.len - 5 ? d - this.len : d;
   }
 
   /** arc length of the track point nearest (x, z) */
@@ -130,7 +148,7 @@ class Train {
   s: number;
   speed = 0;
   dwell = 0;
-  served = false;
+  lastStop = -1; // the station it last stopped at (not stopped at again until it is well on its way)
   readonly group = new THREE.Group();
   private cars: THREE.Group[] = [];
   private tmp = { x: 0, z: 0, tx: 0, tz: 0 };
@@ -175,17 +193,15 @@ class Train {
   }
 }
 
-/** The L: red and brown trains on the elevated tracks, stopping at a station. */
+/** The L: two tracks round the loop, trains running opposite ways, stopping at every station. */
 export class Trains {
   readonly group = new THREE.Group();
   readonly trains: Train[] = [];
   private winMat = new THREE.MeshBasicMaterial({ color: 0x1d2a36 });
   private day = new THREE.Color(0x1d2a36);
   private night = new THREE.Color(0xffe39a);
-  /** station platform spot, for the toast / map */
-  readonly station: { x: number; z: number } | null = null;
 
-  constructor(rails: P2[][], private terrainAt: (x: number, z: number) => number, gradient: THREE.DataTexture) {
+  constructor(rails: P2[][], private terrainAt: (x: number, z: number) => number, gradient: THREE.DataTexture, stations: { p: P2; name: string }[] = []) {
     const polys = rails.filter((r) => r.length >= 2);
     if (!polys.length) return;
     const order = polys.map((_, i) => i).sort((a, b) => polys[b].length - polys[a].length);
@@ -208,17 +224,16 @@ export class Trains {
     const tails = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true });
     const glass = this.winMat;
     glass.vertexColors = true;
-    const lines = [0xc8102e, 0x62361b]; // Red Line, Brown Line
+    const lines = [0x2a8c4a, 0xd88a1c]; // Green Line, Orange Line
 
-    // the station: the point of each track nearest the middle of the map
-    const stationAt: P2 = [0, 0];
+    const stops = stations.length ? stations : [{ p: [0, 0] as P2, name: 'CENTRAL' }];
     tracks.forEach((t, ti) => {
-      t.stopS = t.nearest(stationAt[0], stationAt[1]) + TRAIN_LEN / 2;
-      // platform goes on the side away from the other track
+      t.stops = stops.map((st) => ({ s: t.closed ? t.wrap(t.nearest(st.p[0], st.p[1]) + TRAIN_LEN / 2) : t.nearest(st.p[0], st.p[1]) + TRAIN_LEN / 2, name: st.name }));
+      // platforms go on the side away from the other track
       const other = tracks[1 - ti];
       if (other) {
         const o = { x: 0, z: 0, tx: 0, tz: 0 }, c = { x: 0, z: 0, tx: 0, tz: 0 };
-        t.at(t.stopS - TRAIN_LEN / 2, c);
+        t.at(t.stops[0].s - TRAIN_LEN / 2, c);
         other.at(other.nearest(c.x, c.z), o);
         const nx = -c.tz, nz = c.tx;
         t.platformSide = (o.x - c.x) * nx + (o.z - c.z) * nz > 0 ? 1 : -1; // local +x is the right-hand normal
@@ -230,21 +245,15 @@ export class Trains {
         this.trains.push(tr);
         this.group.add(tr.group);
       }
-      this.group.add(this.buildStation(t, ti));
+      for (const st of t.stops) this.group.add(this.buildStation(t, ti, st.s, st.name));
     });
-    const t0 = tracks[0];
-    if (t0) {
-      const c = { x: 0, z: 0, tx: 0, tz: 0 };
-      t0.at(t0.stopS - TRAIN_LEN / 2, c);
-      (this as { station: { x: number; z: number } | null }).station = { x: c.x, z: c.z };
-    }
     this.trains.forEach((tr) => tr.place(this.terrainAt));
   }
 
-  private buildStation(t: Track, ti: number): THREE.Object3D {
+  private buildStation(t: Track, ti: number, stopS: number, name: string): THREE.Object3D {
     const g = new THREE.Group();
     const centre = { x: 0, z: 0, tx: 0, tz: 0 };
-    t.at(t.stopS - TRAIN_LEN / 2, centre);
+    t.at(stopS - TRAIN_LEN / 2, centre);
     const yaw = Math.atan2(centre.tx, centre.tz);
     const y = this.terrainAt(centre.x, centre.z) + DECK;
     const side = t.platformSide;
@@ -272,12 +281,13 @@ export class Trains {
     const x = c.getContext('2d')!;
     x.fillStyle = '#1f2a36';
     x.fillRect(0, 0, 512, 96);
-    x.fillStyle = ti % 2 ? '#62361b' : '#c8102e';
+    x.fillStyle = ti % 2 ? '#d88a1c' : '#2a8c4a';
     x.fillRect(0, 0, 512, 12);
     x.fillStyle = '#f4f1e6';
     x.font = 'bold 54px ui-monospace, Menlo, monospace';
     x.textAlign = 'center';
-    x.fillText('ADDISON', 256, 72);
+    x.font = `bold ${Math.min(54, Math.floor(880 / Math.max(1, name.length)))}px ui-monospace, Menlo, monospace`;
+    x.fillText(name, 256, 72);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     for (const end of [-1, 1]) {
@@ -301,26 +311,33 @@ export class Trains {
       // hold back behind a train on the same track
       for (const o of this.trains) {
         if (o === tr || o.track !== t) continue;
-        const gap = o.s - TRAIN_LEN - tr.s;
+        const gap = t.closed ? t.wrap(o.s - tr.s) - TRAIN_LEN : o.s - TRAIN_LEN - tr.s;
         if (gap > -TRAIN_LEN && gap < 200) want = Math.min(want, Math.max(0, (gap - 25) * 0.25));
       }
       if (tr.dwell > 0) {
         tr.dwell -= dt;
         want = 0;
-        if (tr.dwell <= 0) tr.served = true;
-      } else if (!tr.served) {
-        const dist = t.stopS - tr.s;
-        if (dist > -2 && dist < 400) want = Math.min(want, Math.sqrt(2 * BRAKE * 0.9 * Math.max(dist, 0)) + (dist < 1.2 ? 0 : 0.6));
-        if (dist < 1.5 && tr.speed < 0.4) {
+      } else {
+        // brake for the next station ahead (the one just left doesn't count until the train is half a loop on)
+        let dist = Infinity, k = -1;
+        t.stops.forEach((st, i) => {
+          const d = t.ahead(tr.s, st.s);
+          if (i === tr.lastStop && (t.closed ? t.wrap(st.s - tr.s) > t.len / 2 || d < 30 : true)) return;
+          if (d > -2 && d < dist) { dist = d; k = i; }
+        });
+        if (k >= 0 && dist < 400) want = Math.min(want, Math.sqrt(2 * BRAKE * 0.9 * Math.max(dist, 0)) + (dist < 1.2 ? 0 : 0.6));
+        if (k >= 0 && dist < 1.5 && tr.speed < 0.4) {
           tr.dwell = DWELL;
           tr.speed = 0;
+          tr.lastStop = k;
         }
       }
       tr.speed += Math.sign(want - tr.speed) * Math.min(Math.abs(want - tr.speed), (want > tr.speed ? ACCEL : BRAKE * 1.2) * dt);
       tr.s += tr.speed * dt;
-      if (tr.s - TRAIN_LEN > t.len - 60) {
+      if (t.closed) tr.s = t.wrap(tr.s);
+      else if (tr.s - TRAIN_LEN > t.len - 60) {
         tr.s = 0;
-        tr.served = false;
+        tr.lastStop = -1;
         tr.speed = CRUISE * 0.6;
       }
       tr.place(this.terrainAt);

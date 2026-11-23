@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import type { Rat } from './rat';
 import { pedestrianGo } from './signals';
-import { CURB, LANE, SIDEWALK_Y, SKIN, HAIR, JACKET, PANTS, UMBRELLA, type Edge, type Net, type Node } from './human';
+import { CURB, LANE, SIDEWALK_Y, SKIN, HAIR, JACKET, PANTS, type Edge, type Net, type Node } from './human';
 
 /**
  * Background pedestrians. Thousands of them, drawn with a handful of InstancedMeshes (torso, head, hair, legs,
- * arms, umbrellas) and simulated with just enough logic to follow the sidewalk graph and obey the walk signals.
+ * arms) and simulated with just enough logic to follow the sidewalk graph and obey the walk signals.
  * The full-detail `Human` rigs stay for the people close enough to stomp the rat; these fill the street behind them.
  */
 
@@ -28,13 +28,11 @@ interface Walker {
   speed: number;
   scale: number;
   active: boolean;
-  umbrella: boolean;
   cloth: THREE.Color;
   armC: THREE.Color;
   skin: THREE.Color;
   hair: THREE.Color;
   legC: THREE.Color;
-  umbC: THREE.Color;
   hipX: number;
   shX: number;
   wait: number;
@@ -55,7 +53,6 @@ export class Crowd {
   private hair: THREE.InstancedMesh;
   private legs: THREE.InstancedMesh;
   private arms: THREE.InstancedMesh;
-  private umbrellas: THREE.InstancedMesh;
 
   constructor(gradient: THREE.DataTexture, private net: Net, starts: Node[], count: number, private radius: number) {
     const mat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: gradient });
@@ -64,7 +61,6 @@ export class Crowd {
     const hairG = new THREE.SphereGeometry(0.128, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.58).scale(0.95, 1.1, 1.04).translate(0, 1.72, -0.008);
     const leg = new THREE.CapsuleGeometry(0.07, 0.78, 2, 6).translate(0, -0.46, 0);
     const arm = new THREE.CapsuleGeometry(0.047, 0.46, 2, 6).translate(0, -0.3, 0);
-    const umb = new THREE.ConeGeometry(0.58, 0.22, 8).translate(0.24, 2.15, 0.34);
 
     const make = (g: THREE.BufferGeometry, n: number, shadow: boolean) => {
       const m = new THREE.InstancedMesh(g, mat, n);
@@ -82,8 +78,7 @@ export class Crowd {
     this.hair = make(hairG, MAX_VISIBLE, false);
     this.legs = make(leg, MAX_VISIBLE * 2, true);
     this.arms = make(arm, MAX_VISIBLE * 2, false);
-    this.umbrellas = make(umb, MAX_VISIBLE, false);
-    // torso, head, hair and umbrella all hang off the figure's own transform: share one matrix buffer
+    // torso, head and hair all hang off the figure's own transform: share one matrix buffer
     this.head.instanceMatrix = this.torso.instanceMatrix;
     this.hair.instanceMatrix = this.torso.instanceMatrix;
 
@@ -109,13 +104,11 @@ export class Crowd {
         speed: 0,
         scale: SCALE * (0.92 + r() * 0.2),
         active: false,
-        umbrella: r() < 0.6,
         cloth,
         armC: kind === 'tee' || kind === 'dress' ? skin : cloth,
         skin,
         hair: bald ? skin : new THREE.Color(pick(HAIR)),
         legC: kind === 'shorts' || kind === 'dress' ? skin : new THREE.Color(kind === 'coat' ? cloth.getHex() : pick(PANTS)),
-        umbC: new THREE.Color(pick(UMBRELLA)),
         hipX: 0.095,
         shX: 0.235 * (0.9 + r() * 0.3),
         wait: 0,
@@ -181,11 +174,10 @@ export class Crowd {
   private qx = new THREE.Quaternion();
   private ax = new THREE.Vector3(1, 0, 0);
 
-  update(dt: number, t: number, rat: Rat, rain: number): void {
+  update(dt: number, t: number, rat: Rat): void {
     const R2 = this.radius * this.radius, R2h = R2 * 1.32;
-    const umbOn = rain > 0.35;
-    let n = 0, nu = 0;
-    const { torso, head, hair, legs, arms, umbrellas } = this;
+    let n = 0;
+    const { torso, head, hair, legs, arms } = this;
     for (const w of this.walkers) {
       const dx = w.x - rat.pos.x, dz = w.z - rat.pos.z;
       const d2 = dx * dx + dz * dz;
@@ -223,17 +215,11 @@ export class Crowd {
         arms.setMatrixAt(n * 2 + i, this.M);
         arms.setColorAt(n * 2 + i, w.armC);
       }
-      if (umbOn && w.umbrella) {
-        umbrellas.setMatrixAt(nu, this.B);
-        umbrellas.setColorAt(nu, w.umbC);
-        nu++;
-      }
       n++;
     }
     torso.count = head.count = hair.count = n;
     legs.count = arms.count = n * 2;
-    umbrellas.count = nu;
-    for (const m of [torso, head, hair, legs, arms, umbrellas]) {
+    for (const m of [torso, head, hair, legs, arms]) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
