@@ -198,6 +198,7 @@ let camYawInit = Number(new URLSearchParams(location.search).get('yaw') ?? Math.
   // ?cam=x,y,z,lookX,lookY,lookZ pins the camera (screenshots)
   if (q.has('cam')) Object.assign(window, { __cam: q.get('cam')!.split(',').map(Number) });
 }
+if (rat.mode !== 'climb') rat.yaw = camYawInit - Math.PI; // face where the camera starts looking
 
 // ---- game state ----
 const MAX_HEARTS = 3;
@@ -277,6 +278,8 @@ function takeHit(fromX: number, fromZ: number, why: string) {
 
 // ---- map: open with M, click to teleport ----
 let camYaw = camYawInit;
+const LOOK_HOLD = 1.2; // seconds a manual look holds before the camera swings back behind the rat
+let lookHold = 0;
 const mapView = world.map
   ? new MapView(world.map, (x, z) => {
       // nearest open ground to the clicked spot (not inside a building or tree)
@@ -363,6 +366,7 @@ addEventListener('blur', () => keys.clear());
 addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
   camYaw -= e.movementX * 0.0025;
+  if (e.movementX) lookHold = LOOK_HOLD;
   camPitch = THREE.MathUtils.clamp(camPitch + e.movementY * 0.0025, 0.08, 1.2);
 });
 $('start').addEventListener('click', () => {
@@ -496,6 +500,8 @@ function frame(now: number) {
   simTime += dt;
   const t = simTime;
 
+  // manual look (mouse, Q/E, touch drag, right stick) is a temporary peek; the camera swings back behind the rat after
+  if (keys.has('KeyQ') || keys.has('KeyE') || touch.lookDX || pad.lookX) lookHold = LOOK_HOLD;
   if (keys.has('KeyQ')) camYaw += realDt * 1.8;
   if (keys.has('KeyE')) camYaw -= realDt * 1.8;
   camYaw -= touch.lookDX * 0.005;
@@ -522,9 +528,16 @@ function frame(now: number) {
       sprint: keys.has('ShiftLeft') || keys.has('ShiftRight') || pad.sprint || touch.sprint,
       jump: keys.has('Space') || pad.jump || touch.jump,
     },
-    camYaw,
     level,
   );
+  // ---- auto-orient: ease the camera round behind the way the rat faces ----
+  {
+    const behind = rat.yaw + Math.PI;
+    let d = behind - camYaw;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    if (camSnap) camYaw = behind;
+    else if ((lookHold -= realDt) <= 0) camYaw += d * (1 - Math.exp(-realDt * 4));
+  }
   if (rat.jumped) {
     rat.jumped = false;
     sfx.squeak();

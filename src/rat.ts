@@ -5,6 +5,7 @@ export const RAT_SCALE = 0.45; // the model is drawn ~1.4 m long; at this scale 
 export const RAT_RADIUS = 0.12;
 const STEP = 0.25; // max ledge the rat scrambles up without jumping (a curb is 0.22)
 const GRAVITY = 26;
+const TURN_RATE = 3.4; // rad/s at full left/right input
 const JUMP = 8.2;
 export const MAX_FUEL = 3; // seconds of rotor lift
 const HUB_Y = 0.63; // tail rotor hub height above the back
@@ -27,7 +28,7 @@ export interface Level {
 }
 
 export interface MoveInput {
-  x: number; // strafe  (-1 left .. 1 right)
+  x: number; // turn    (-1 left .. 1 right)
   z: number; // forward (-1 back .. 1 forward)
   sprint: boolean;
   jump: boolean;
@@ -51,6 +52,7 @@ export class Rat {
   private prevJump = false;
   private knock = new THREE.Vector2();
   private climbPhase = 0;
+  private back = false; // backing up (moving opposite the facing)
 
   private body: THREE.Group = new THREE.Group();
   private legs: THREE.Mesh[] = [];
@@ -209,7 +211,7 @@ export class Rat {
     return true;
   }
 
-  update(dt: number, input: MoveInput, camYaw: number, level: Level): void {
+  update(dt: number, input: MoveInput, level: Level): void {
     this.hurt = Math.max(0, this.hurt - dt);
     this.cd = Math.max(0, this.cd - dt);
     const jumpEdge = input.jump && !this.prevJump;
@@ -221,28 +223,20 @@ export class Rat {
       return;
     }
 
-    // camera-relative wish direction (camera looks down -z at yaw 0)
-    const sin = Math.sin(camYaw), cos = Math.cos(camYaw);
-    let wx = input.x * cos - input.z * sin;
-    let wz = -input.x * sin - input.z * cos;
-    const len = Math.hypot(wx, wz);
-    if (len > 1) {
-      wx /= len;
-      wz /= len;
-    }
-    const top = (input.sprint ? 7.5 : 4.4) * (this.flying ? FLY_SPEED_MULT : 1); // flying flag is last frame's
-    const want = Math.min(1, len) * top;
+    // rat-relative steering: x turns, z runs forward (or backs up). The camera follows the facing.
+    const turn = THREE.MathUtils.clamp(input.x, -1, 1);
+    this.yaw -= turn * TURN_RATE * dt;
+    const fwd = THREE.MathUtils.clamp(input.z, -1, 1);
+    const len = Math.abs(fwd);
+    if (len > 0.05) this.back = fwd < 0;
+    const top = (input.sprint ? 7.5 : 4.4) * (this.flying ? FLY_SPEED_MULT : 1) * (this.back ? 0.5 : 1); // flying flag is last frame's
+    const want = len * top;
     this.speed += (want - this.speed) * Math.min(1, dt * 14); // snappy accel, rat-like
-    if (len > 0.05) {
-      const target = Math.atan2(wx, wz);
-      let d = target - this.yaw;
-      d = Math.atan2(Math.sin(d), Math.cos(d));
-      this.yaw += d * Math.min(1, dt * 14);
-    }
+    const mag = len > 0.05 ? len : 0;
     // keep gliding along the facing direction while speed decays, so stops aren't instant
-    const mag = Math.hypot(wx, wz);
-    const dirX = mag > 0.05 ? wx / mag : Math.sin(this.yaw);
-    const dirZ = mag > 0.05 ? wz / mag : Math.cos(this.yaw);
+    const sgn = this.back ? -1 : 1;
+    const dirX = Math.sin(this.yaw) * sgn;
+    const dirZ = Math.cos(this.yaw) * sgn;
     this.pos.x += dirX * this.speed * dt + this.knock.x * dt;
     this.pos.z += dirZ * this.speed * dt + this.knock.y * dt;
     this.knock.multiplyScalar(Math.exp(-dt * (this.grounded ? 8 : 1.2)));

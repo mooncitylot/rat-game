@@ -1,4 +1,4 @@
-/** On-screen controls for touch devices: left stick moves, right side drags to look, buttons for jump/sprint/map. */
+/** On-screen controls for touch devices: left stick moves, right side drags to peek (camera auto-follows), buttons for jump/sprint/map. */
 export const touch = { enabled: false, x: 0, z: 0, lookDX: 0, lookDY: 0, jump: false, sprint: false };
 
 export function initTouch(onMap: () => void): void {
